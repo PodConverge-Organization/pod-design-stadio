@@ -367,7 +367,7 @@
             print-area-ids (->> ids
                                 (filter (fn [id]
                                           (let [shape (get objects id)]
-                                            (and shape (dsh/shape-is-print-area? shape)))))
+                                            (and shape (dsh/shape-is-protected-print-area? shape objects)))))
                                 (into []))]
 
         (if (not (empty? print-area-ids))
@@ -669,7 +669,11 @@
               (let [page-id (:current-page-id state)
                     objects (dsh/lookup-page-objects state page-id)
                     selected (dsh/lookup-selected state {:omit-blocked? true})
-                    filtered (dsh/remove-print-area-ids selected objects)]
+                    filtered (->> selected
+                                  (remove (fn [id]
+                                            (let [shape (get objects id)]
+                                              (and shape (dsh/shape-is-print-area? shape)))))
+                                  (into []))]
                 (if (d/not-empty? filtered)
                   ;; There is at least one non-print-area selected — allow duplicate+move
                   (rx/of (start-move from-position))
@@ -1100,29 +1104,29 @@
              objects   (dsh/lookup-page-objects state page-id)
              shape     (get objects id)]
 
-         ;; If shape is a print-area, do nothing
-         (when (and shape (dsh/shape-is-print-area? shape))
-           (js/console.debug "update-position: target is print-area, skipping move for id" id)
-           (rx/of (finish-transform))) ;; ensure we return an empty observable
+         (if (and shape (dsh/shape-is-protected-print-area? shape objects))
+           (do
+             (dsh/log-print-area-protection-blocked! shape objects "workspace.transforms/update-position")
+             (js/console.debug "update-position: target is print-area, skipping move for id" id)
+             (rx/of (finish-transform)))
+           (let [bbox      (-> shape :points grc/points->rect)
+                 frame     (if (:absolute? options)
+                             (cfh/get-frame objects)
+                             (cfh/get-parent-frame objects shape))
+                 delta     (calculate-delta position bbox frame)
+                 modifiers (dwm/create-modif-tree [id] (ctm/move-modifiers delta))]
 
-         (let [bbox      (-> shape :points grc/points->rect)
-               frame     (if (:absolute? options)
-                           (cfh/get-frame objects)
-                           (cfh/get-parent-frame objects shape))
-               delta     (calculate-delta position bbox frame)
-               modifiers (dwm/create-modif-tree [id] (ctm/move-modifiers delta))]
+             (if (features/active-feature? state "render-wasm/v1")
+               (rx/of (dwm/apply-wasm-modifiers modifiers
+                                                {:ignore-constraints false
+                                                 :ignore-touched (:ignore-touched options)
+                                                 :ignore-snap-pixel true}))
 
-           (if (features/active-feature? state "render-wasm/v1")
-             (rx/of (dwm/apply-wasm-modifiers modifiers
-                                              {:ignore-constraints false
-                                               :ignore-touched (:ignore-touched options)
-                                               :ignore-snap-pixel true}))
-
-             (rx/of (dwm/apply-modifiers {:modifiers modifiers
-                                          :page-id page-id
-                                          :ignore-constraints false
-                                          :ignore-touched (:ignore-touched options)
-                                          :ignore-snap-pixel true})))))))))
+               (rx/of (dwm/apply-modifiers {:modifiers modifiers
+                                            :page-id page-id
+                                            :ignore-constraints false
+                                            :ignore-touched (:ignore-touched options)
+                                            :ignore-snap-pixel true}))))))))))
 
 (defn position-shapes
   [shapes]

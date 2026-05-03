@@ -298,11 +298,132 @@
                 (get-shape-plugin-data shape "shared/podconverge" "isBoardPrintArea"))]
     (boolean (truthy-plugin-value? val))))
 
-(defn- remove-print-area-ids
-  "Filter out print-area ids from `ids` using `objects` map."
+(def ^:private podconverge-plugin-ns
+  "shared/podconverge")
+
+(def ^:private correction-edit-active-key
+  "isCorrectionEditActive")
+
+(def ^:private correction-edit-session-id-key
+  "correctionEditSessionId")
+
+(def ^:private correction-edit-target-board-id-key
+  "correctionEditTargetBoardId")
+
+(def ^:private correction-edit-target-print-area-id-key
+  "correctionEditTargetPrintAreaId")
+
+(defn- plugin-id=?
+  [id plugin-id]
+  (and (some? id)
+       (some? plugin-id)
+       (= (str id) (str plugin-id))))
+
+(defn- shape-is-print-area-background?
+  [shape]
+  (truthy-plugin-value?
+   (get-shape-plugin-data shape podconverge-plugin-ns "isPrintAreaBackground")))
+
+(defn- shape-is-board-print-area?
+  [shape]
+  (truthy-plugin-value?
+   (get-shape-plugin-data shape podconverge-plugin-ns "isBoardPrintArea")))
+
+(defn- correction-edit-marker
+  [shape]
+  (when (truthy-plugin-value?
+         (get-shape-plugin-data shape podconverge-plugin-ns correction-edit-active-key))
+    (let [session-id (get-shape-plugin-data shape podconverge-plugin-ns correction-edit-session-id-key)
+          board-id   (get-shape-plugin-data shape podconverge-plugin-ns correction-edit-target-board-id-key)
+          print-id   (get-shape-plugin-data shape podconverge-plugin-ns correction-edit-target-print-area-id-key)]
+      (when (and (some? session-id)
+                 (not (str/blank? (str session-id)))
+                 (some? board-id)
+                 (some? print-id))
+        {:session-id session-id
+         :board-id board-id
+         :print-area-id print-id}))))
+
+(defn- shape-matches-correction-marker?
+  [shape marker]
+  (let [id (:id shape)
+        parent-id (:parent-id shape)
+        frame-id (:frame-id shape)
+        board-id (:board-id marker)
+        print-id (:print-area-id marker)]
+    (or (plugin-id=? id board-id)
+        (plugin-id=? id print-id)
+        (and (shape-is-print-area-background? shape)
+             (or (plugin-id=? parent-id print-id)
+                 (plugin-id=? frame-id print-id)
+                 (plugin-id=? parent-id board-id)
+                 (plugin-id=? frame-id board-id))))))
+
+(defn- active-correction-edit-marker-for-shape
+  [shape objects]
+  (or (when-let [marker (correction-edit-marker shape)]
+        (when (shape-matches-correction-marker? shape marker)
+          marker))
+      (some (fn [[_ candidate]]
+              (when-let [marker (correction-edit-marker candidate)]
+                (when (shape-matches-correction-marker? shape marker)
+                  marker)))
+            objects)))
+
+(defn shape-is-correction-edit-target?
+  "Return true when shape is the target board, print area, or background for
+  an active correction edit marker.
+
+  The marker is intentionally explicit and target scoped:
+  shared/podconverge.isCorrectionEditActive = \"1\"
+  shared/podconverge.correctionEditSessionId = non-empty request/session id
+  shared/podconverge.correctionEditTargetBoardId = target board id
+  shared/podconverge.correctionEditTargetPrintAreaId = target print-area id"
+  [shape objects]
+  (boolean (and shape
+                (active-correction-edit-marker-for-shape shape objects))))
+
+(defn shape-protection-bypassed-for-correction?
+  "Return true only for the currently marked correction edit target."
+  [shape objects]
+  (shape-is-correction-edit-target? shape objects))
+
+(defn shape-is-protected-print-area?
+  "Return true when shape is print-area protected after applying the scoped
+  correction edit bypass."
+  [shape objects]
+  (and (shape-is-print-area? shape)
+       (not (shape-protection-bypassed-for-correction? shape objects))))
+
+(defn print-area-protection-diagnostics
+  "Return focused diagnostics for print-area protection decisions."
+  [shape objects guard-site]
+  (let [session-id (get-shape-plugin-data shape podconverge-plugin-ns correction-edit-session-id-key)]
+    {:guard-site guard-site
+     :shape-id (:id shape)
+     :is-board-print-area (get-shape-plugin-data shape podconverge-plugin-ns "isBoardPrintArea")
+     :is-print-area (get-shape-plugin-data shape podconverge-plugin-ns "isPrintArea")
+     :is-print-area-background (get-shape-plugin-data shape podconverge-plugin-ns "isPrintAreaBackground")
+     :is-correction-edit-active (get-shape-plugin-data shape podconverge-plugin-ns correction-edit-active-key)
+     :correction-edit-session-id-present? (and (some? session-id)
+                                               (not (str/blank? (str session-id))))
+     :correction-edit-target-board-id (get-shape-plugin-data shape podconverge-plugin-ns correction-edit-target-board-id-key)
+     :correction-edit-target-print-area-id (get-shape-plugin-data shape podconverge-plugin-ns correction-edit-target-print-area-id-key)
+     :bypass? (shape-protection-bypassed-for-correction? shape objects)
+     :protected? (shape-is-protected-print-area? shape objects)}))
+
+(defn log-print-area-protection-blocked!
+  "Log focused diagnostics when a board-level print-area guard blocks mutation."
+  [shape objects guard-site]
+  (when (shape-is-board-print-area? shape)
+    (js/console.debug "print-area board transform blocked"
+                      (clj->js (print-area-protection-diagnostics shape objects guard-site)))))
+
+(defn remove-print-area-ids
+  "Filter out protected print-area ids from `ids` using `objects` map."
   [ids objects]
   (->> ids
        (remove (fn [id]
                  (let [shape (get objects id)]
-                   (and shape (shape-is-print-area? shape)))))
+                   (and shape (shape-is-protected-print-area? shape objects)))))
        (into [])))

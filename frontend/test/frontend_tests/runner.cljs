@@ -10,6 +10,7 @@
    [frontend-tests.logic.frame-guides-test]
    [frontend-tests.logic.groups-test]
    [frontend-tests.plugins.context-shapes-test]
+   [frontend-tests.print-area-protection-test]
    [frontend-tests.tokens.import-export-test]
    [frontend-tests.tokens.logic.token-actions-test]
    [frontend-tests.tokens.logic.token-data-test]
@@ -36,6 +37,7 @@
    'frontend-tests.logic.frame-guides-test
    'frontend-tests.logic.groups-test
    'frontend-tests.plugins.context-shapes-test
+   'frontend-tests.print-area-protection-test
    'frontend-tests.util-range-tree-test
    'frontend-tests.util-snap-data-test
    'frontend-tests.util-simple-math-test

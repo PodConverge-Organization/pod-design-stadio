@@ -8,6 +8,38 @@ desc: "See Penpot's technical guide: self-hosting, configuration, developer insi
 This guide intends to explain the essential details of the frontend
 application.
 
+## Print-area protection and correction edit
+
+The Pod Converge fork protects print-area shapes by default in frontend
+workspace mutation paths. Shapes marked with
+`shared/podconverge.isBoardPrintArea`, `shared/podconverge.isPrintArea`, or
+`shared/podconverge.isPrintAreaBackground` are filtered or blocked from normal
+transform operations.
+
+Admin correction edit mode does not remove that protection globally. The plugin
+must set explicit target-scoped correction metadata before starting correction
+edit and clear it on save or cancel:
+
+- `shared/podconverge.isCorrectionEditActive = "1"`
+- `shared/podconverge.correctionEditSessionId = "<request/session id>"`
+- `shared/podconverge.correctionEditTargetBoardId = "<board id>"`
+- `shared/podconverge.correctionEditTargetPrintAreaId = "<print area id>"`
+
+The frontend bypass applies only when the active marker has a non-empty session
+id and the shape being transformed is the target board, the target print area,
+or the print-area background attached to that target. Other protected
+print-areas remain protected, and clone/delete paths continue to use the strict
+print-area guard.
+
+Clearing `isBoardPrintArea`, `isPrintArea`, or `isPrintAreaBackground` to `"0"`
+is best-effort only and is not enough to model privileged correction editing,
+because fork-level transform and modifier paths also apply their own
+protected-shape filtering. The correction metadata is the deterministic signal
+that a selected target transform is privileged. Board-level guards must honor the
+correction marker even if `isBoardPrintArea` remains `"1"` or becomes `"1"`
+again during re-inspection; the bypass stays scoped to the marked target board
+and does not affect other protected boards.
+
 ## UI
 
 Please refer to the [UI Guide](/technical-guide/developer/ui) to learn about implementing UI components and our design system.

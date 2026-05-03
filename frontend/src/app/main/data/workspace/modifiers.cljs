@@ -267,7 +267,7 @@
                  (remove (fn [id]
                            (or (= id uuid/zero)
                                (let [shape (get objects id)]
-                                 (and shape (dsh/shape-is-print-area? shape))))))
+                                 (and shape (dsh/shape-is-protected-print-area? shape objects))))))
                  ;; ensure concrete seq for into
                  (into []))]
     (into {} (map #(vector % {:modifiers (get-modifier (get objects %))}) ids))))
@@ -506,10 +506,13 @@
              (->> ids
                   (filter (fn [id]
                             (let [shape (get objects id)]
-                              (and shape (dsh/shape-is-print-area? shape)))))
+                              (and shape (dsh/shape-is-protected-print-area? shape objects)))))
                   (into []))]
          (if (not (empty? print-area-ids))
            (do
+             (doseq [id print-area-ids]
+               (when-let [shape (get objects id)]
+                 (dsh/log-print-area-protection-blocked! shape objects "workspace.modifiers/set-modifiers")))
              (js/console.debug "set-modifiers: aborting because modif-tree contains print-area ids"
                                (clj->js print-area-ids))
              ;; return state unchanged (no modifiers applied)
@@ -708,15 +711,15 @@
          (ptk/event ::dwcm/move-frame-comment-threads transforms)
          (dwsh/update-shapes ids update-shape options))))))
 
-(def ^:private
-  xf-rotation-shape
-  (comp
-   ;; remove blocked shapes and print-area shapes
-   (remove (fn [s]
-             (or (get s :blocked false)
-                 (dsh/shape-is-print-area? s))))
-   (filter #(:rotation (get editable-attrs (:type %))))
-   (map :id)))
+(defn- rotation-shape-ids
+  [shapes objects]
+  (->> shapes
+       ;; remove blocked shapes and protected print-area shapes
+       (remove (fn [s]
+                 (or (get s :blocked false)
+                     (dsh/shape-is-protected-print-area? s objects))))
+       (filter #(:rotation (get editable-attrs (:type %))))
+       (map :id)))
 
 ;; Rotation use different algorithm to calculate children
 ;; modifiers (and do not use child constraints).
@@ -729,7 +732,7 @@
      ptk/EffectEvent
      (effect [_ state _]
        (let [objects (dsh/lookup-page-objects state)
-             ids     (sequence xf-rotation-shape shapes)
+             ids     (rotation-shape-ids shapes objects)
 
              get-modifier
              (fn [shape]
@@ -755,7 +758,7 @@
      ptk/UpdateEvent
      (update [_ state]
        (let [objects (dsh/lookup-page-objects state)
-             ids     (sequence xf-rotation-shape shapes)
+             ids     (rotation-shape-ids shapes objects)
 
              get-modifier
              (fn [shape]
@@ -781,7 +784,7 @@
             (->> shapes
                  ;; remove blocked shapes and print-area shapes
                  (remove #(or (get % :blocked false)
-                              (dsh/shape-is-print-area? %)))
+                              (dsh/shape-is-protected-print-area? % objects)))
                  (filter #(contains? (get editable-attrs (:type %)) :rotation))
                  (map :id))
 
@@ -812,7 +815,7 @@
             (->> ids
                  (filter (fn [id]
                            (let [shape (get objects id)]
-                             (and shape (dsh/shape-is-print-area? shape)))))
+                             (and shape (dsh/shape-is-protected-print-area? shape objects)))))
                  (into []))
 
             ids-with-children
@@ -850,6 +853,9 @@
         ;; Abort whole operation if any target id is a print-area
         (if (not (empty? print-area-ids))
           (do
+            (doseq [id print-area-ids]
+              (when-let [shape (get objects id)]
+                (dsh/log-print-area-protection-blocked! shape objects "workspace.modifiers/apply-modifiers*")))
             (js/console.debug "apply-modifiers*: aborting because targets contain print-area ids" (clj->js print-area-ids))
             (rx/empty))
           (rx/of (ptk/event ::dwg/move-frame-guides {:ids ids-with-children :modifiers object-modifiers})
@@ -884,7 +890,7 @@
              (->> ids
                   (filter (fn [id]
                             (let [shape (get objects id)]
-                              (and shape (dsh/shape-is-print-area? shape)))))
+                              (and shape (dsh/shape-is-protected-print-area? shape objects)))))
                   (into []))
 
              undo-id
@@ -893,6 +899,9 @@
          ;; Abort whole operation if any target id is a print-area
          (if (not (empty? print-area-ids))
            (do
+             (doseq [id print-area-ids]
+               (when-let [shape (get objects id)]
+                 (dsh/log-print-area-protection-blocked! shape objects "workspace.modifiers/apply-modifiers")))
              (js/console.debug "apply-modifiers: aborting because targets contain print-area ids" (clj->js print-area-ids))
              ;; return an empty observable - nothing executed, no undo started
              (rx/empty))
