@@ -26,6 +26,7 @@
    [app.main.data.workspace.modifiers :as dwm]
    [app.main.data.workspace.selection :as dws]
    [app.main.data.workspace.shapes :as dwsh]
+   [app.main.data.workspace.text-defaults :as text-defaults]
    [app.main.data.workspace.transforms :as dwt]
    [app.main.data.workspace.undo :as dwu]
    [app.main.features :as features]
@@ -198,8 +199,8 @@
     ptk/UpdateEvent
     (update [_ state]
       (let [text-state   (some->> content ted/import-content)
-            attrs        (merge (txt/get-default-text-attrs)
-                                (get-in state [:workspace-global :default-font]))
+            attrs        (text-defaults/new-text-attrs
+                          (get-in state [:workspace-global :default-font]))
             editor       (cond-> (ted/create-editor-state text-state decorator)
                            (and (nil? content) (some? attrs))
                            (ted/update-editor-current-block-data attrs))]

@@ -3,6 +3,7 @@
    [cljs.test :as t]
    [frontend-tests.basic-shapes-test]
    [frontend-tests.data.workspace-colors-test]
+   [frontend-tests.data.workspace-text-defaults-test]
    [frontend-tests.helpers-shapes-test]
    [frontend-tests.logic.comp-remove-swap-slots-test]
    [frontend-tests.logic.components-and-tokens]
@@ -43,6 +44,7 @@
    'frontend-tests.util-simple-math-test
    'frontend-tests.basic-shapes-test
    'frontend-tests.data.workspace-colors-test
+   'frontend-tests.data.workspace-text-defaults-test
    'frontend-tests.tokens.logic.token-actions-test
    'frontend-tests.tokens.logic.token-data-test
    'frontend-tests.tokens.import-export-test

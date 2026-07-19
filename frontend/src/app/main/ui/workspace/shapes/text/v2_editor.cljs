@@ -17,6 +17,7 @@
    [app.common.types.text :as txt]
    [app.config :as cf]
    [app.main.data.workspace :as dw]
+   [app.main.data.workspace.text-defaults :as text-defaults]
    [app.main.data.workspace.texts :as dwt]
    [app.main.features :as features]
    [app.main.fonts :as fonts]
@@ -59,6 +60,17 @@
                (when (some? font-id)
                  (fonts/ensure-loaded! font-id variant-id))))))
 
+(defn new-text-style-defaults
+  [default-font text-color]
+  (styles/get-style-defaults
+   (text-defaults/ensure-valid-font-size
+    (merge
+     (txt/get-default-text-attrs)
+     text-defaults/new-text-baseline
+     {:fills [{:fill-color text-color :fill-opacity 1}]}
+     txt/default-root-attrs
+     default-font))))
+
 (defn- initialize-event-handlers
   "Internal editor events handler initializer/destructor"
   [shape-id content selection-ref editor-ref container-ref text-color]
@@ -73,12 +85,7 @@
         (deref refs/default-font)
 
         style-defaults
-        (styles/get-style-defaults
-         (merge
-          (txt/get-default-text-attrs)
-          {:fills [{:fill-color text-color :fill-opacity 1}]}
-          txt/default-root-attrs
-          default-font))
+        (new-text-style-defaults default-font text-color)
 
         options
         #js {:styleDefaults style-defaults

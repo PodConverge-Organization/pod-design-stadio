@@ -40,6 +40,16 @@ correction marker even if `isBoardPrintArea` remains `"1"` or becomes `"1"`
 again during re-inspection; the bypass stays scoped to the marked target board
 and does not affect other protected boards.
 
+## New Interactive Text Defaults
+
+In the PodConverge frontend, newly created interactive text starts at font size
+`400` when the workspace has no saved last-used font size. If the user has
+selected another valid font size, that saved workspace `default-font` value
+continues to override the PodConverge baseline for subsequent text creation.
+
+The shared Penpot text fallback remains `14` for backward compatibility with
+existing documents, legacy content, and default typography behavior.
+
 ## UI
 
 Please refer to the [UI Guide](/technical-guide/developer/ui) to learn about implementing UI components and our design system.

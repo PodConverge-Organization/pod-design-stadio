@@ -12,6 +12,7 @@
    [app.common.types.path :as path]
    [app.common.types.shape :as cts]
    [app.main.data.helpers :as dsh]
+   [app.main.data.workspace.text-defaults :as text-defaults]
    [app.main.data.workspace.shapes :as dwsh]
    [app.main.data.workspace.undo :as dwu]
    [app.main.worker :as mw]
@@ -24,6 +25,12 @@
     ptk/UpdateEvent
     (update [_ state]
       (dissoc state :workspace-drawing))))
+
+(defn click-text-geometry
+  [default-font]
+  {:height (text-defaults/new-text-line-box-height default-font)
+   :width 4
+   :grow-type :auto-width})
 
 (defn handle-finish-drawing
   []
@@ -52,6 +59,7 @@
 
                  width       (get drawing-state :width 100)
                  height      (get drawing-state :height 100)
+                 default-font (get-in state [:workspace-global :default-font])
 
                  shape
                  (cond-> shape
@@ -69,7 +77,7 @@
                        (gsh/transform-shape (ctm/move-modifiers (- (/ width 2)) (- (/ height 2)))))
 
                    (and click-draw? text?)
-                   (-> (assoc :height 17 :width 4 :grow-type :auto-width)
+                   (-> (merge shape (click-text-geometry default-font))
                        (cts/setup-shape))
 
                    (or (cfh/path-shape? shape)
@@ -102,4 +110,3 @@
          ;; Delay so the mouse event can read the drawing state
          (->> (rx/of (clear-drawing))
               (rx/delay 0)))))))
-
