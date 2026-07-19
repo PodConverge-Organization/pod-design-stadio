@@ -71,6 +71,18 @@
      txt/default-root-attrs
      default-font))))
 
+(defn create-editor-instance!
+  [editor-node selection-node default-font text-color]
+  (let [options
+        #js {:styleDefaults (new-text-style-defaults default-font text-color)
+             :selectionImposterElement selection-node}]
+    (dwt/create-editor editor-node options)))
+
+(defn load-existing-content!
+  [instance content]
+  (when (some? content)
+    (dwt/set-editor-root! instance (content/cljs->dom content))))
+
 (defn- initialize-event-handlers
   "Internal editor events handler initializer/destructor"
   [shape-id content selection-ref editor-ref container-ref text-color]
@@ -84,15 +96,8 @@
         default-font
         (deref refs/default-font)
 
-        style-defaults
-        (new-text-style-defaults default-font text-color)
-
-        options
-        #js {:styleDefaults style-defaults
-             :selectionImposterElement selection-node}
-
         instance
-        (dwt/create-editor editor-node options)
+        (create-editor-instance! editor-node selection-node default-font text-color)
 
         update-name? (nil? content)
 
@@ -150,8 +155,7 @@
     (.addEventListener ^js instance "clipboardchange" on-clipboard-change)
 
     (st/emit! (dwt/update-editor instance))
-    (when (some? content)
-      (dwt/set-editor-root! instance (content/cljs->dom content)))
+    (load-existing-content! instance content)
     (when (some? instance)
       (st/emit! (dwt/focus-editor)))
 

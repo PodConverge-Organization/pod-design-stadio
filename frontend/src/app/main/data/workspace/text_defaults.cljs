@@ -7,27 +7,60 @@
 (ns app.main.data.workspace.text-defaults
   (:require
    [app.common.math :as mth]
-   [app.common.types.text :as txt]))
+   [app.common.types.text :as txt]
+   [cuerdas.core :as str]))
 
 (def new-text-baseline
   {:font-size "400"})
 
 (def ^:private min-font-size 3)
 (def ^:private max-font-size 1000)
+(def ^:private complete-decimal-pattern
+  #"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
+
+(defn- parse-complete-number
+  [value]
+  (cond
+    (number? value)
+    (when (mth/finite? value) value)
+
+    (string? value)
+    (let [trimmed (str/trim value)]
+      (when (re-matches complete-decimal-pattern trimmed)
+        (let [parsed (js/Number trimmed)]
+          (when (mth/finite? parsed)
+            parsed))))
+
+    :else
+    nil))
+
+(defn- valid-font-size
+  [value]
+  (let [parsed (parse-complete-number value)]
+    (when (and (some? parsed)
+               (<= min-font-size parsed max-font-size))
+      parsed)))
+
+(defn- canonical-number-string
+  [value]
+  (str value))
+
+(defn- normalize-font-size
+  [value]
+  (if-let [font-size (valid-font-size value)]
+    (canonical-number-string font-size)
+    (:font-size new-text-baseline)))
 
 (defn- parse-positive-number
   [value fallback]
-  (let [parsed (js/parseFloat value)]
-    (if (and (mth/finite? parsed) (pos? parsed))
+  (let [parsed (parse-complete-number value)]
+    (if (and (some? parsed) (pos? parsed))
       parsed
       fallback)))
 
 (defn ensure-valid-font-size
   [attrs]
-  (let [font-size (parse-positive-number (:font-size attrs) 0)]
-    (if (<= min-font-size font-size max-font-size)
-      attrs
-      (assoc attrs :font-size (:font-size new-text-baseline)))))
+  (assoc attrs :font-size (normalize-font-size (:font-size attrs))))
 
 (defn new-text-attrs
   ([] (new-text-attrs nil))
