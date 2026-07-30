@@ -106,7 +106,7 @@
     "scheduler": "^0.27.0",
     "source-map-support": "^0.5.21",
     "storybook": "10.1.11",
-    "style-dictionary": "5.0.0-rc.1",
+    "style-dictionary": "5.4.4",
     "svg-sprite": "^2.0.4",
     "tdigest": "^0.1.2",
     "tinycolor2": "^1.6.0",
