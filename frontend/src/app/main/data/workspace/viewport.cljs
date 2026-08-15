@@ -14,6 +14,7 @@
    [app.common.geom.rect :as gpr]
    [app.common.geom.shapes :as gsh]
    [app.common.math :as mth]
+   [app.main.data.event :as ev]
    [app.main.data.helpers :as dsh]
    [app.util.mouse :as mse]
    [beicon.v2.core :as rx]
@@ -50,7 +51,7 @@
 
                 (or (> (:width srect) width)
                     (> (:height srect) height))
-                (let [srect (gal/adjust-to-viewport size srect {:padding 40})
+                (let [srect (gal/adjust-to-viewport size srect {:padding 40 :min-zoom 0.01})
                       zoom  (/ (:width size) (:width srect))]
 
                   (-> local
@@ -113,6 +114,8 @@
    (fn? y))
 
   (ptk/reify ::update-viewport-position
+    ev/PerformanceEvent
+
     ptk/UpdateEvent
     (update [_ state]
       (update-in state [:workspace-local :vbox]

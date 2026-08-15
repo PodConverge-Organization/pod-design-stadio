@@ -6,6 +6,7 @@
 
 (ns app.rpc.commands.fonts
   (:require
+   [app.binfile.common :as bfc]
    [app.common.data.macros :as dm]
    [app.common.exceptions :as ex]
    [app.common.schema :as sm]
@@ -26,9 +27,17 @@
    [app.rpc.helpers :as rph]
    [app.rpc.quotes :as quotes]
    [app.storage :as sto]
+   [app.storage.tmp :as tmp]
    [app.util.services :as sv]
-   [app.worker :as-alias wrk]
-   [promesa.exec :as px]))
+   [datoteka.io :as io])
+  (:import
+   java.io.InputStream
+   java.io.OutputStream
+   java.io.SequenceInputStream
+   java.util.Collections))
+
+(set! *warn-on-reflection* true)
+
 
 (def valid-weight #{100 200 300 400 500 600 700 800 900 950})
 (def valid-style #{"normal" "italic"})
@@ -37,14 +46,13 @@
 
 (def ^:private
   schema:get-font-variants
-  [:schema {:title "get-font-variants"}
-   [:and
-    [:map
-     [:team-id {:optional true} ::sm/uuid]
-     [:file-id {:optional true} ::sm/uuid]
-     [:project-id {:optional true} ::sm/uuid]
-     [:share-id {:optional true} ::sm/uuid]]
-    [::sm/contains-any #{:team-id :file-id :project-id}]]])
+  [:and
+   [:map {:title "get-font-variants"}
+    [:team-id {:optional true} ::sm/uuid]
+    [:file-id {:optional true} ::sm/uuid]
+    [:project-id {:optional true} ::sm/uuid]
+    [:share-id {:optional true} ::sm/uuid]]
+   [::sm/contains-any #{:team-id :file-id :project-id}]])
 
 (sv/defmethod ::get-font-variants
   {::doc/added "1.18"
@@ -69,7 +77,7 @@
       (uuid? file-id)
       (let [file    (db/get-by-id conn :file file-id {:columns [:id :project-id]})
             project (db/get-by-id conn :project (:project-id file) {:columns [:id :team-id]})
-            perms   (files/get-permissions conn profile-id file-id share-id)]
+            perms   (bfc/get-file-permissions conn profile-id file-id share-id)]
         (files/check-read-permissions! perms)
         (db/query conn :team-font-variant
                   {:team-id (:team-id project)
@@ -81,7 +89,8 @@
 (def ^:private schema:create-font-variant
   [:map {:title "create-font-variant"}
    [:team-id ::sm/uuid]
-   [:data [:map-of ::sm/text ::sm/any]]
+   [:data [:map-of ::sm/text [:or ::sm/bytes
+                              [::sm/vec ::sm/bytes]]]]
    [:font-id ::sm/uuid]
    [:font-family ::sm/text]
    [:font-weight [::sm/one-of {:format "number"} valid-weight]]
@@ -106,8 +115,8 @@
                 (create-font-variant cfg (assoc params :profile-id profile-id)))))
 
 (defn create-font-variant
-  [{:keys [::sto/storage ::db/conn ::wrk/executor]} {:keys [data] :as params}]
-  (letfn [(generate-missing! [data]
+  [{:keys [::sto/storage ::db/conn]} {:keys [data] :as params}]
+  (letfn [(generate-missing [data]
             (let [data (media/run {:cmd :generate-fonts :input data})]
               (when (and (not (contains? data "font/otf"))
                          (not (contains? data "font/ttf"))
@@ -118,8 +127,26 @@
                           :hint "invalid font upload, unable to generate missing font assets"))
               data))
 
+          (process-chunks [chunks]
+            (let [tmp     (tmp/tempfile :prefix "penpot.tempfont." :suffix "")
+                  streams (map io/input-stream chunks)
+                  streams (Collections/enumeration streams)]
+              (with-open [^OutputStream output (io/output-stream tmp)
+                          ^InputStream input (SequenceInputStream. streams)]
+                (io/copy input output))
+              tmp))
+
+          (join-chunks [data]
+            (reduce-kv (fn [data mtype content]
+                         (if (vector? content)
+                           (assoc data mtype (process-chunks content))
+                           data))
+                       data
+                       data))
+
           (prepare-font [data mtype]
             (when-let [resource (get data mtype)]
+
               (let [hash    (sto/calculate-hash resource)
                     content (-> (sto/content resource)
                                 (sto/wrap-with-hash hash))]
@@ -158,7 +185,8 @@
                          :otf-file-id (:id otf)
                          :ttf-file-id (:id ttf)}))]
 
-    (let [data   (px/invoke! executor (partial generate-missing! data))
+    (let [data   (join-chunks data)
+          data   (generate-missing data)
           assets (persist-fonts-files! data)
           result (insert-font-variant! assets)]
       (vary-meta result assoc ::audit/replace-props (update params :data (comp vec keys))))))

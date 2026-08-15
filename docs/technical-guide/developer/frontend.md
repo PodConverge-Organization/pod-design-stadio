@@ -50,6 +50,29 @@ continues to override the PodConverge baseline for subsequent text creation.
 The shared Penpot text fallback remains `14` for backward compatibility with
 existing documents, legacy content, and default typography behavior.
 
+## Design Studio plugin frame
+
+The PodConverge Design Studio plugin frame is mandatory application UI. End
+users cannot close or unload it through the frame chrome; the frame provides a
+minimize/maximize control instead. Minimizing keeps the existing iframe and
+plugin runtime instance mounted, and maximizing restores the dimensions from
+immediately before minimization. Application and runtime lifecycle operations
+remain responsible for explicit teardown.
+
+This frame behavior is applied to the pinned `@penpot/plugins-runtime` package
+through pnpm patching. Revalidate the patch, frame interaction, accessibility,
+iframe state preservation, and explicit lifecycle teardown whenever the runtime
+dependency is upgraded.
+
+Plugin-initiated product navigation is mediated by the Design Studio host; the
+generic plugin iframe remains unable to navigate the top-level page directly.
+The host authenticates both the mandatory plugin origin and its active iframe
+window, then allowlists the destination origin and route. Production Design
+Studio may navigate only to the production PodConverge app origin; explicit
+test and local app origins are accepted only from approved local Design Studio
+origins. The approved routes remain Direct Order Continue, Mockup Publish, and
+AI Upgrade. Generic iframe top-navigation remains disabled.
+
 ## UI
 
 Please refer to the [UI Guide](/technical-guide/developer/ui) to learn about implementing UI components and our design system.
@@ -259,7 +282,7 @@ repository:
 
 ```bash
 # cd <repo>/frontend
-yarn run validate-translations
+pnpm run translations
 ```
 
 At Penpot core team we maintain manually the english and spanish .po files. All
@@ -350,7 +373,7 @@ Ensure your development environment docker image is up to date.
 This is not required, but it may be convenient to compile Penpot in release mode before running the tests. This way they will be much quicker and stable. For this, go to the frontend window in the tmux session (<code class="language-bash">Ctrl + b 1</code>), interrupt the watch process with <code class="language-bash">Ctrl + C</code> and type:
 
 ```bash
-yarn run build:app
+./scripts/build
 ```
 
 Obviously, in this mode if you make changes to the source code, you will need to repeat the build manually each time. It may be useful to use wath mode when debugging a single test, and use release mode to run all the suite.
@@ -370,17 +393,17 @@ Here's how to run the tests with a headless browser (i.e. within the terminal, n
 cd penpot/frontend
 ```
 
-3. Run the tests with <code class="language-bash">yarn</code>:
+3. Run the tests with <code class="language-bash">pnpm</code>:
 
 ```bash
-yarn test:e2e
+pnpm run test:e2e
 ```
 
 > 💡 **TIP:** By default, the tests will _not_ run in parallel. You can set the amount of workers to run the tests with <code class="language-bash">--workers</code>. Note that, depending on your machine, this might make some tests flaky.
 
 ```bash
 # run in parallel with 4 workers
-yarn test:e2e --workers 4
+pnpm run test:e2e --workers 4
 ```
 
 #### Running the tests in Chromium
@@ -398,7 +421,7 @@ npx playwright test --ui
 
 > ❗️ **IMPORTANT**: You might need to [install Playwright's browsers and dependencies](https://playwright.dev/docs/intro) in your host machine with: <code class="language-bash">npx playwright install --with-deps</code>. In case you are using a Linux distribution other than Ubuntu, [you might need to install the dependencies manually](https://github.com/microsoft/playwright/issues/11122).
 
-> You will also need yarn in your host nodejs. For this, do <code class="language-bash">corepack enable</code> and then just <code class="language-bash">yarn</code>.
+> You will also need pnpm in your host nodejs. For this, do <code class="language-bash">corepack enable</code> and then just <code class="language-bash">pnpm</code>.
 
 ### How to write a test
 

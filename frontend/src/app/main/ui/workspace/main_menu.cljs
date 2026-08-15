@@ -7,17 +7,13 @@
 (ns app.main.ui.workspace.main-menu
   (:require-macros [app.main.style :as stl])
   (:require
-   [app.common.data :as d]
-   [app.common.data.macros :as dm]
    [app.common.files.helpers :as cfh]
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.main.data.common :as dcm]
    [app.main.data.event :as ev]
    [app.main.data.exports.assets :as de]
-   [app.main.data.exports.files :as fexp]
    [app.main.data.modal :as modal]
-   [app.main.data.plugins :as dp]
    [app.main.data.profile :as du]
    [app.main.data.shortcuts :as scd]
    [app.main.data.workspace :as dw]
@@ -28,13 +24,15 @@
    [app.main.features :as features]
    [app.main.refs :as refs]
    [app.main.store :as st]
-   [app.main.ui.components.dropdown-menu :refer [dropdown-menu* dropdown-menu-item*]]
+   [app.main.ui.components.dropdown-menu :refer [dropdown-menu*
+                                                 dropdown-menu-item*]]
    [app.main.ui.context :as ctx]
-   [app.main.ui.dashboard.subscription :refer [main-menu-power-up* get-subscription-type]]
+   [app.main.ui.dashboard.subscription :refer [get-subscription-type
+                                               main-menu-power-up*]]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
+   [app.main.ui.ds.foundations.assets.icon :as i]
    [app.main.ui.hooks.resize :as r]
-   [app.main.ui.icons :as i]
-   [app.plugins.register :as preg]
+   [app.main.ui.icons :as deprecated-icon]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.keyboard :as kbd]
@@ -50,22 +48,18 @@
    ::mf/wrap [mf/memo]}
   [{:keys [layout on-close]}]
   (let [nav-to-helpc-center
-        (mf/use-fn #(dom/open-new-window "https://www.podconverge.com/help"))
-
-        nav-to-community
-        (mf/use-fn #(dom/open-new-window "https://community.penpot.app"))
-
-        nav-to-youtube
-        (mf/use-fn #(dom/open-new-window "https://www.youtube.com/c/podconverge"))
-
-        nav-to-templates
-        (mf/use-fn #(dom/open-new-window "https://penpot.app/libraries-templates"))
-
-        nav-to-github
-        (mf/use-fn #(dom/open-new-window "https://github.com/penpot/penpot"))
+        (mf/use-fn
+         (fn []
+           (st/emit! (ptk/event ::ev/event {::ev/name "explore-help-center-click"
+                                            ::ev/origin "workspace-menu:in-app"}))
+           (dom/open-new-window "https://www.podconverge.com/help")))
 
         nav-to-terms
-        (mf/use-fn #(dom/open-new-window "https://www.podconverge.com/privacy"))
+        (mf/use-fn
+         (fn []
+           (st/emit! (ptk/event ::ev/event {::ev/name "explore-terms-service-click"
+                                            ::ev/origin "workspace-menu:in-app"}))
+           (dom/open-new-window "https://www.podconverge.com/privacy")))
 
         nav-to-feedback
         (mf/use-fn #(st/emit! (dcm/go-to-feedback)))
@@ -82,16 +76,7 @@
 
            (st/emit!
             (-> (dw/toggle-layout-flag :shortcuts)
-                (vary-meta assoc ::ev/origin "workspace-header")))))
-
-        show-release-notes
-        (mf/use-fn
-         (fn [event]
-           (let [version (:main cf/version)]
-             (st/emit! (ptk/event ::ev/event {::ev/name "show-release-notes" :version version}))
-             (if (and (kbd/alt? event) (kbd/mod? event))
-               (st/emit! (modal/show {:type :onboarding}))
-               (st/emit! (modal/show {:type :release-notes :version version}))))))]
+                (vary-meta assoc ::ev/origin "workspace-header")))))]
 
     [:> dropdown-menu* {:show true
                         ;; :id "workspace-help-menu"
@@ -106,46 +91,6 @@
                                                (nav-to-helpc-center event)))
                               :id          "file-menu-help-center"}
       [:span {:class (stl/css :item-name)} (tr "labels.help-center")]]
-
-;;      [:> dropdown-menu-item* {:class (stl/css :submenu-item)
-;;                               :on-click    nav-to-community
-;;                               :on-key-down (fn [event]
-;;                                              (when (kbd/enter? event)
-;;                                                (nav-to-community event)))
-;;                               :id          "file-menu-community"}
-;;       [:span {:class (stl/css :item-name)} (tr "labels.community")]]
-
-;;      [:> dropdown-menu-item* {:class (stl/css :submenu-item)
-;;                               :on-click    nav-to-youtube
-;;                               :on-key-down (fn [event]
-;;                                              (when (kbd/enter? event)
-;;                                                (nav-to-youtube event)))
-;;                               :id          "file-menu-youtube"}
-;;       [:span {:class (stl/css :item-name)} (tr "labels.tutorials")]]
-
-;;      [:> dropdown-menu-item* {:class (stl/css :submenu-item)
-;;                               :on-click    show-release-notes
-;;                               :on-key-down (fn [event]
-;;                                              (when (kbd/enter? event)
-;;                                                (show-release-notes event)))
-;;                               :id          "file-menu-release-notes"}
-;;       [:span {:class (stl/css :item-name)} (tr "labels.release-notes")]]
-
-;;      [:> dropdown-menu-item* {:class (stl/css :submenu-item)
-;;                               :on-click    nav-to-templates
-;;                               :on-key-down (fn [event]
-;;                                              (when (kbd/enter? event)
-;;                                                (nav-to-templates event)))
-;;                               :id          "file-menu-templates"}
-;;       [:span {:class (stl/css :item-name)} (tr "labels.libraries-and-templates")]]
-
-;;      [:> dropdown-menu-item* {:class (stl/css :submenu-item)
-;;                               :on-click    nav-to-github
-;;                               :on-key-down (fn [event]
-;;                                              (when (kbd/enter? event)
-;;                                                (nav-to-github event)))
-;;                               :id          "file-menu-github"}
-;;       [:span {:class (stl/css :item-name)} (tr "labels.github-repo")]]
 
      [:> dropdown-menu-item* {:class (stl/css :submenu-item)
                               :on-click    nav-to-terms
@@ -289,8 +234,7 @@
          (tr "workspace.header.menu.toggle-light-theme"))]
       [:span {:class (stl/css :shortcut)}
        (for [sc (scd/split-sc (sc/get-tooltip :toggle-theme))]
-         [:span {:class (stl/css :shortcut-key) :key sc} sc])]]
-         ]))
+         [:span {:class (stl/css :shortcut-key) :key sc} sc])]]]))
 
 (mf/defc view-menu*
   {::mf/props :obj
@@ -492,8 +436,13 @@
         shared?      (:is-shared file)
 
         objects      (mf/deref refs/workspace-page-objects)
-        frames       (->> (cfh/get-immediate-children objects uuid/zero)
+        selected     (mf/deref refs/selected-shapes)
+        all-frames   (->> (cfh/get-immediate-children objects uuid/zero)
                           (filterv cfh/frame-shape?))
+
+        ;; If there are selected frames, use only those. Otherwise, use all frames
+        selected-frames (filterv #(contains? selected (:id %)) all-frames)
+        frames       (if (seq selected-frames) selected-frames all-frames)
 
         perms        (mf/use-ctx ctx/permissions)
         can-edit     (:can-edit perms)
@@ -567,23 +516,6 @@
            (when (kbd/enter? event)
              (on-export-shapes event))))
 
-        on-export-file
-        (mf/use-fn
-         (mf/deps file)
-         (fn [event]
-           (let [target  (dom/get-current-target event)
-                 format  (-> (dom/get-data target "format")
-                             (keyword))]
-             (st/emit! (st/emit! (with-meta (fexp/export-files [file] format)
-                                   {::ev/origin "workspace"}))))))
-
-        on-export-file-key-down
-        (mf/use-fn
-         (mf/deps on-export-file)
-         (fn [event]
-           (when (kbd/enter? event)
-             (on-export-file event))))
-
         on-export-frames
         (mf/use-fn
          (mf/deps frames)
@@ -652,33 +584,6 @@
        (for [sc (scd/split-sc (sc/get-tooltip :export-shapes))]
          [:span {:class (stl/css :shortcut-key) :key sc} sc])]]
 
-     (when-not (contains? cf/flags :export-file-v3)
-       [:> dropdown-menu-item* {:class (stl/css :submenu-item)
-                                :on-click    on-export-file
-                                :on-key-down on-export-file-key-down
-                                :data-format "binfile-v1"
-                                :id          "file-menu-binary-file"}
-        [:span {:class (stl/css :item-name)}
-         (tr "dashboard.download-binary-file")]])
-
-;;      (when (contains? cf/flags :export-file-v3)
-;;        [:> dropdown-menu-item* {:class (stl/css :submenu-item)
-;;                                 :on-click    on-export-file
-;;                                 :on-key-down on-export-file-key-down
-;;                                 :data-format "binfile-v3"
-;;                                 :id          "file-menu-binary-file"}
-;;         [:span {:class (stl/css :item-name)}
-;;          (tr "dashboard.download-binary-file")]])
-
-     (when-not (contains? cf/flags :export-file-v3)
-       [:> dropdown-menu-item* {:class (stl/css :submenu-item)
-                                :on-click    on-export-file
-                                :on-key-down on-export-file-key-down
-                                :data-format "legacy-zip"
-                                :id          "file-menu-standard-file"}
-        [:span {:class (stl/css :item-name)}
-         (tr "dashboard.download-standard-file")]])
-
      (when (seq frames)
        [:> dropdown-menu-item* {:class (stl/css :submenu-item)
                                 :on-click    on-export-frames
@@ -686,74 +591,6 @@
                                 :id          "file-menu-export-frames"}
         [:span {:class (stl/css :item-name)}
          (tr "dashboard.export-frames")]])]))
-
-(mf/defc plugins-menu*
-  {::mf/props :obj
-   ::mf/private true
-   ::mf/wrap [mf/memo]}
-  [{:keys [open-plugins on-close]}]
-  (when (features/active-feature? @st/state "plugins/runtime")
-    (let [plugins                  (preg/plugins-list)
-          user-can-edit?           (:can-edit (deref refs/permissions))
-          permissions-peek         (deref refs/plugins-permissions-peek)]
-      [:> dropdown-menu* {:show true
-                          ;; :id "workspace-plugins-menu"
-                          :class (stl/css-case :sub-menu true :plugins true)
-                          :on-close on-close}
-       [:> dropdown-menu-item* {:on-click    open-plugins
-                                :class       (stl/css :submenu-item)
-                                :on-key-down (fn [event]
-                                               (when (kbd/enter? event)
-                                                 (open-plugins event)))
-                                :data-testid   "open-plugins"
-                                :id          "file-menu-open-plugins"}
-        [:span {:class (stl/css :item-name)}
-         (tr "workspace.plugins.menu.plugins-manager")]
-        [:span {:class (stl/css :shortcut)}
-         (for [sc (scd/split-sc (sc/get-tooltip :plugins))]
-           [:span {:class (stl/css :shortcut-key) :key sc} sc])]]
-
-
-       (when (d/not-empty? plugins)
-         [:div {:class (stl/css :separator)}])
-
-       (for [[idx {:keys [plugin-id name host permissions] :as manifest}] (d/enumerate plugins)]
-         (let [permissions        (or (get permissions-peek plugin-id) permissions)
-               is-edition-plugin? (or (contains? permissions "content:write")
-                                      (contains? permissions "library:write"))
-               can-open?          (or user-can-edit?
-                                      (not is-edition-plugin?))
-               on-click
-               (mf/use-fn
-                (mf/deps can-open? name host manifest user-can-edit?)
-                (fn [event]
-                  (if can-open?
-                    (do
-                      (st/emit! (ptk/event ::ev/event {::ev/name "start-plugin"
-                                                       ::ev/origin "workspace:menu"
-                                                       :name name
-                                                       :host host}))
-                      (dp/open-plugin! manifest user-can-edit?))
-                    (dom/stop-propagation event))))
-               on-key-down
-               (mf/use-fn
-                (mf/deps can-open? name host manifest user-can-edit?)
-                (fn [event]
-                  (when can-open?
-                    (when (kbd/enter? event)
-                      (st/emit! (ptk/event ::ev/event {::ev/name "start-plugin"
-                                                       ::ev/origin "workspace:menu"
-                                                       :name name
-                                                       :host host}))
-                      (dp/open-plugin! manifest user-can-edit?)))))]
-           [:> dropdown-menu-item* {:key         (dm/str "plugins-menu-" idx)
-                                    :on-click    on-click
-                                    :class       (stl/css-case :submenu-item true :menu-disabled (not can-open?))
-                                    :on-key-down on-key-down}
-            [:span {:class (stl/css :item-name)} name]
-            (when-not can-open?
-              [:span {:class (stl/css :item-icon)
-                      :title (tr "workspace.plugins.error.need-editor")} i/help])]))])))
 
 (mf/defc menu
   {::mf/props :obj}
@@ -821,16 +658,6 @@
            (dom/stop-propagation event)
            (st/emit! (du/toggle-theme))))
 
-        open-plugins-manager
-        (mf/use-fn
-         (fn [event]
-           (dom/stop-propagation event)
-           (reset! show-menu* false)
-           (reset! sub-menu* nil)
-           (st/emit!
-            (ptk/event ::ev/event {::ev/name "open-plugins-manager" ::ev/origin "workspace:menu"})
-            (modal/show :plugin-management {}))))
-
         subscription           (:subscription (:props profile))
         subscription-type      (get-subscription-type subscription)]
 
@@ -843,9 +670,10 @@
 
     [:*
      [:> icon-button* {:variant "ghost"
+                       :aria-pressed show-menu?
                        :aria-label (tr "shortcut-subsection.main-menu")
-                       :on-click open-menu
-                       :icon "menu"}]
+                       :on-click (if show-menu? close-all-menus open-menu)
+                       :icon i/menu}]
 
      [:> dropdown-menu* {:show show-menu?
                          :id "workspace-menu"
@@ -860,7 +688,7 @@
                                :data-testid   "file"
                                :id          "file-menu-file"}
        [:span {:class (stl/css :item-name)} (tr "workspace.header.menu.option.file")]
-       [:span {:class (stl/css :open-arrow)} i/arrow]]
+       [:span {:class (stl/css :open-arrow)} deprecated-icon/arrow]]
 
       [:> dropdown-menu-item* {:class (stl/css :menu-item)
                                :on-click    on-menu-click
@@ -871,7 +699,7 @@
                                :data-testid   "edit"
                                :id          "file-menu-edit"}
        [:span {:class (stl/css :item-name)} (tr "workspace.header.menu.option.edit")]
-       [:span {:class (stl/css :open-arrow)} i/arrow]]
+       [:span {:class (stl/css :open-arrow)} deprecated-icon/arrow]]
 
       [:> dropdown-menu-item* {:class (stl/css :menu-item)
                                :on-click    on-menu-click
@@ -882,7 +710,7 @@
                                :data-testid   "view"
                                :id          "file-menu-view"}
        [:span {:class (stl/css :item-name)} (tr "workspace.header.menu.option.view")]
-       [:span {:class (stl/css :open-arrow)} i/arrow]]
+       [:span {:class (stl/css :open-arrow)} deprecated-icon/arrow]]
 
       [:> dropdown-menu-item* {:class (stl/css :menu-item)
                                :on-click    on-menu-click
@@ -893,19 +721,7 @@
                                :data-testid   "preferences"
                                :id          "file-menu-preferences"}
        [:span {:class (stl/css :item-name)} (tr "workspace.header.menu.option.preferences")]
-       [:span {:class (stl/css :open-arrow)} i/arrow]]
-
-;;       (when (features/active-feature? @st/state "plugins/runtime")
-;;         [:> dropdown-menu-item* {:class (stl/css :menu-item)
-;;                                  :on-click    on-menu-click
-;;                                  :on-key-down (fn [event]
-;;                                                 (when (kbd/enter? event)
-;;                                                   (on-menu-click event)))
-;;                                  :on-pointer-enter on-menu-click
-;;                                  :data-testid   "plugins"
-;;                                  :id          "file-menu-plugins"}
-;;          [:span {:class (stl/css :item-name)} (tr "workspace.plugins.menu.title")]
-;;          [:span {:class (stl/css :open-arrow)} i/arrow]])
+       [:span {:class (stl/css :open-arrow)} deprecated-icon/arrow]]
 
       [:div {:class (stl/css :separator)}]
       [:> dropdown-menu-item* {:class (stl/css-case :menu-item true)
@@ -917,7 +733,7 @@
                                :data-testid   "help-info"
                                :id          "file-menu-help-info"}
        [:span {:class (stl/css :item-name)} (tr "workspace.header.menu.option.help-info")]
-       [:span {:class (stl/css :open-arrow)} i/arrow]]
+       [:span {:class (stl/css :open-arrow)} deprecated-icon/arrow]]
 
       (when (and (contains? cf/flags :subscriptions) (not= "enterprise" subscription-type))
         [:> main-menu-power-up* {:close-sub-menu close-sub-menu}])
@@ -954,11 +770,6 @@
          :profile profile
          :toggle-flag toggle-flag
          :toggle-theme toggle-theme
-         :on-close close-sub-menu}]
-
-       :plugins
-       [:> plugins-menu*
-        {:open-plugins open-plugins-manager
          :on-close close-sub-menu}]
 
        :help-info

@@ -4,7 +4,7 @@
 //
 // Copyright (c) KALEIDOS INC
 
-@use "../typography.scss" as *;
+@use "ds/typography.scss" as *;
 @use "./buttons" as *;
 
 .button {
@@ -15,6 +15,7 @@
 
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   column-gap: var(--sp-xs);
 }
 
@@ -32,4 +33,10 @@
 
 .button-destructive {
   @extend %base-button-destructive;
+}
+
+.button-link {
+  &:hover {
+    text-decoration: none;
+  }
 }

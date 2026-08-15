@@ -7,8 +7,8 @@
 (ns app.common.types.variant
   (:require
    [app.common.data :as d]
-   [app.common.files.helpers :as cfh]
    [app.common.math :as math]
+   [app.common.path-names :as cpn]
    [app.common.schema :as sm]
    [cuerdas.core :as str]))
 
@@ -22,33 +22,26 @@
    [:value :string]])
 
 (def schema:variant-component
-  ;; A component that is part of a variant set.
-  (sm/register!
-   ^{::sm/type ::variant-component}
-   [:map
-    [:variant-id {:optional true} ::sm/uuid]
-    [:variant-properties {:optional true} [:vector schema:variant-property]]]))
+  "A component that is part of a variant set"
+  [:map
+   [:variant-id {:optional true} ::sm/uuid]
+   [:variant-properties {:optional true} [:vector schema:variant-property]]])
 
 (def schema:variant-shape
-  ;; The root shape of the main instance of a variant component.
+  "The root shape of the main instance of a variant component"
   [:map
    [:variant-id {:optional true} ::sm/uuid]
    [:variant-name {:optional true} :string]
    [:variant-error {:optional true} :string]])
 
 (def schema:variant-container
-  ;; is a board that contains all variant components of a variant set,
-  ;; for grouping them visually in the workspace.
+  "Is a board that contains all variant components of a variant set,
+  for grouping them visually in the workspace"
   [:map
    [:is-variant-container {:optional true} :boolean]])
 
-(sm/register! ::variant-property schema:variant-property)
-(sm/register! ::variant-shape schema:variant-shape)
-(sm/register! ::variant-container schema:variant-container)
-
 (def valid-variant-component?
   (sm/check-fn schema:variant-component))
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -57,7 +50,6 @@
 (def property-max-length 60)
 (def value-prefix "Value ")
 
-
 (defn properties-to-name
   "Transform the properties into a name, with the values separated by comma"
   [properties]
@@ -65,7 +57,6 @@
        (map :value)
        (remove str/empty?)
        (str/join ", ")))
-
 
 (defn next-property-number
   "Returns the next property number, to avoid duplicates on the property names"
@@ -99,14 +90,13 @@
   ([path properties]
    (path-to-properties path properties 0))
   ([path properties min-props]
-   (let [cpath          (cfh/split-path path)
+   (let [cpath          (cpn/split-path path)
          total-props    (max (count cpath) min-props)
          assigned       (mapv #(assoc % :value (nth cpath %2 "")) properties (range))
          ;; Add empty strings to the end of cpath to reach the minimum number of properties
          cpath          (take total-props (concat cpath (repeat "")))
          remaining      (drop (count properties) cpath)]
      (add-new-props assigned remaining))))
-
 
 (defn properties-map->formula
   "Transforms a map of properties to a formula of properties omitting the empty ones"
@@ -117,7 +107,6 @@
                  (str name "=" value))))
        (str/join ", ")))
 
-
 (defn properties-formula->map
   "Transforms a formula of properties to a map of properties"
   [s]
@@ -127,7 +116,6 @@
        (mapv (fn [[k v]]
                {:name (str/trim k)
                 :value (str/trim v)}))))
-
 
 (defn valid-properties-formula?
   "Checks if a formula is valid"
@@ -145,20 +133,17 @@
   (let [upd-names (set (map :name upd-props))]
     (filterv #(not (contains? upd-names (:name %))) prev-props)))
 
-
 (defn find-properties-to-update
   "Compares two property maps to find which properties should be updated"
   [prev-props upd-props]
   (filterv #(some (fn [prop] (and (= (:name %) (:name prop))
                                   (not= (:value %) (:value prop)))) prev-props) upd-props))
 
-
 (defn find-properties-to-add
   "Compares two property maps to find which properties should be added"
   [prev-props upd-props]
   (let [prev-names (set (map :name prev-props))]
     (filterv #(not (contains? prev-names (:name %))) upd-props)))
-
 
 (defn- split-base-name-and-number
   "Extract the number in parentheses from an item, if present, and return both the base name and the number"
@@ -198,7 +183,6 @@
                  (conj acc {:name (update-number-in-repeated-item (mapv :name acc) (:name prop))
                             :value (:value prop)}))
                [])))
-
 
 (defn find-index-for-property-name
   "Finds the index of a name in a property map"
@@ -325,4 +309,24 @@
   "Transforms a variant-name (its properties values) into a standard name:
    the real name of the shape joined by the properties values separated by '/'"
   [variant]
-  (cfh/merge-path-item (:name variant) (str/replace (:variant-name variant) #", " " / ")))
+  (cpn/merge-path-item (:name variant) (str/replace (:variant-name variant) #", " " / ")))
+
+(def ^:private boolean-pairs
+  [["on" "off"]
+   ["yes" "no"]
+   ["true" "false"]])
+
+(defn find-boolean-pair
+  "Given a vector, return a map that contains the boolean equivalency if the values match
+   with any of the boolean pairs. Returns nil if none match."
+  [[a b :as v]]
+  (let [a' (-> a str/trim str/lower)
+        b' (-> b str/trim str/lower)]
+    (when (= (count v) 2)
+      (some (fn [[t f]]
+              (cond (and (= a' t)
+                         (= b' f)) {a true b false}
+                    (and (= b' t)
+                         (= a' f)) {b true a false}
+                    :else nil))
+            boolean-pairs))))

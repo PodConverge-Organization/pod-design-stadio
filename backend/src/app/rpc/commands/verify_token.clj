@@ -38,7 +38,7 @@
    ::doc/module :auth
    ::sm/params schema:verify-token}
   [cfg {:keys [token] :as params}]
-  (let [claims (tokens/verify (::setup/props cfg) {:token token})]
+  (let [claims (tokens/verify cfg {:token token})]
     (db/tx-run! cfg process-token params claims)))
 
 (defmethod process-token :change-email
@@ -73,7 +73,7 @@
                   {:id (:id profile)}))
 
     (-> claims
-        (rph/with-transform (session/create-fn cfg profile-id))
+        (rph/with-transform (session/create-fn cfg profile))
         (rph/with-meta {::audit/name "verify-profile-email"
                         ::audit/props (audit/profile->props profile)
                         ::audit/profile-id (:id profile)}))))
@@ -128,7 +128,7 @@
    [:iss :keyword]
    [:exp ::ct/inst]
    [:profile-id ::sm/uuid]
-   [:role ::types.team/role]
+   [:role types.team/schema:role]
    [:team-id ::sm/uuid]
    [:member-email ::sm/email]
    [:member-id {:optional true} ::sm/uuid]])

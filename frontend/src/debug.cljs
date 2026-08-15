@@ -8,6 +8,7 @@
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
+   [app.common.exceptions :as ex]
    [app.common.files.repair :as cfr]
    [app.common.files.validate :as cfv]
    [app.common.json :as json]
@@ -32,6 +33,7 @@
    [app.main.store :as st]
    [app.util.debug :as dbg]
    [app.util.dom :as dom]
+   [app.util.http :as http]
    [app.util.object :as obj]
    [app.util.timers :as timers]
    [beicon.v2.core :as rx]
@@ -58,15 +60,27 @@
 (defn enable!
   [option]
   (dbg/enable! option)
-  (when (= :events option)
-    (set! st/*debug-events* true))
+  (case option
+    :events
+    (set! st/*debug-events* true)
+
+    :events-times
+    (set! st/*debug-events-time* true)
+
+    nil)
   (js* "app.main.reinit()"))
 
 (defn disable!
   [option]
   (dbg/disable! option)
-  (when (= :events option)
-    (set! st/*debug-events* false))
+  (case option
+    :events
+    (set! st/*debug-events* false)
+
+    :events-times
+    (set! st/*debug-events-time* false)
+
+    nil)
   (js* "app.main.reinit()"))
 
 (defn ^:export toggle-debug
@@ -185,7 +199,7 @@
 
 (defn ^:export dump-object
   [name]
-  (get-object @st/state name))
+  (clj->js (get-object @st/state name)))
 
 (defn get-selected
   [state]
@@ -277,14 +291,6 @@
   ([shape-id show-ids] (dump-subtree' @st/state shape-id show-ids false false))
   ([shape-id show-ids show-touched] (dump-subtree' @st/state shape-id show-ids show-touched false))
   ([shape-id show-ids show-touched show-modified] (dump-subtree' @st/state shape-id show-ids show-touched show-modified)))
-
-(when *assert*
-  (defonce debug-subscription
-    (->> st/stream
-         (rx/filter ptk/event?)
-         (rx/filter (fn [s] (and (dbg/enabled? :events)
-                                 (not (debug-exclude-events (ptk/type s))))))
-         (rx/subs! #(println "[stream]: " (ptk/repr-event %))))))
 
 (defn ^:export apply-changes
   "Takes a Transit JSON changes"
@@ -385,7 +391,7 @@
             (group-by :code)
             (clj->js))
        (catch :default cause
-         (errors/print-error! cause))))))
+         (ex/print-throwable cause))))))
 
 (defn ^:export validate-schema
   []
@@ -393,7 +399,7 @@
     (let [file (dsh/lookup-file @st/state)]
       (cfv/validate-file-schema! file))
     (catch :default cause
-      (errors/print-error! cause))))
+      (ex/print-throwable cause))))
 
 (defn ^:export repair
   [reload?]
@@ -425,7 +431,7 @@
                           (when reload?
                             (dom/reload-current-window)))
                         (fn [cause]
-                          (errors/print-error! cause)))))))))
+                          (ex/print-throwable cause)))))))))
 
 (defn ^:export fix-orphan-shapes
   []
@@ -447,3 +453,12 @@
 (defn ^:export set-shape-ref
   [id shape-ref]
   (st/emit! (set-shape-ref* id shape-ref)))
+
+(defn ^:export network-averages
+  []
+  (.log js/console (clj->js @http/network-averages)))
+
+
+(defn print-last-exception
+  []
+  (some-> errors/last-exception ex/print-throwable))

@@ -20,7 +20,8 @@
    [app.http.awsns :as http.awsns]
    [app.http.client :as-alias http.client]
    [app.http.debug :as-alias http.debug]
-   [app.http.session :as-alias session]
+   [app.http.management :as mgmt]
+   [app.http.session :as session]
    [app.http.session.tasks :as-alias session.tasks]
    [app.http.websocket :as http.ws]
    [app.loggers.webhooks :as-alias webhooks]
@@ -30,7 +31,6 @@
    [app.redis :as-alias rds]
    [app.rpc :as-alias rpc]
    [app.rpc.climit :as-alias climit]
-   [app.rpc.doc :as-alias rpc.doc]
    [app.setup :as-alias setup]
    [app.srepl :as-alias srepl]
    [app.storage :as-alias sto]
@@ -41,6 +41,7 @@
    [app.svgo :as-alias svgo]
    [app.util.cron]
    [app.worker :as-alias wrk]
+   [app.worker.executor]
    [clojure.test :as test]
    [clojure.tools.namespace.repl :as repl]
    [cuerdas.core :as str]
@@ -147,23 +148,11 @@
     ::mdef/labels []
     ::mdef/type :histogram}
 
-   :executors-active-threads
-   {::mdef/name "penpot_executors_active_threads"
-    ::mdef/help "Current number of threads available in the executor service."
-    ::mdef/labels ["name"]
-    ::mdef/type :gauge}
-
-   :executors-completed-tasks
-   {::mdef/name "penpot_executors_completed_tasks_total"
-    ::mdef/help "Approximate number of completed tasks by the executor."
-    ::mdef/labels ["name"]
-    ::mdef/type :counter}
-
-   :executors-running-threads
-   {::mdef/name "penpot_executors_running_threads"
-    ::mdef/help "Current number of threads with state RUNNING."
-    ::mdef/labels ["name"]
-    ::mdef/type :gauge}})
+   :http-server-dispatch-timing
+   {::mdef/name "penpot_http_server_dispatch_timing"
+    ::mdef/help "Histogram of dispatch handler"
+    ::mdef/labels []
+    ::mdef/type :histogram}})
 
 (def system-config
   {::db/pool
@@ -175,14 +164,12 @@
     ::db/max-size   (cf/get :database-max-pool-size 60)
     ::mtx/metrics   (ig/ref ::mtx/metrics)}
 
-   ;; Default thread pool for IO operations
-   ::wrk/executor
-   {}
+   ;; Default netty IO pool (shared between several services)
+   ::wrk/netty-io-executor
+   {:threads (cf/get :netty-io-threads)}
 
-   ::wrk/monitor
-   {::mtx/metrics  (ig/ref ::mtx/metrics)
-    ::wrk/executor (ig/ref ::wrk/executor)
-    ::wrk/name     "default"}
+   ::wrk/netty-executor
+   {:threads (cf/get :executor-threads)}
 
    :app.migrations/migrations
    {::db/pool (ig/ref ::db/pool)}
@@ -193,17 +180,27 @@
    ::mtx/routes
    {::mtx/metrics (ig/ref ::mtx/metrics)}
 
-   ::rds/redis
-   {::rds/uri      (cf/get :redis-uri)
-    ::mtx/metrics  (ig/ref ::mtx/metrics)
-    ::wrk/executor (ig/ref ::wrk/executor)}
+   ::rds/client
+   {::rds/uri
+    (cf/get :redis-uri)
+
+    ::wrk/netty-executor
+    (ig/ref ::wrk/netty-executor)
+
+    ::wrk/netty-io-executor
+    (ig/ref ::wrk/netty-io-executor)}
+
+   ::rds/pool
+   {::rds/client  (ig/ref ::rds/client)
+    ::mtx/metrics (ig/ref ::mtx/metrics)}
 
    ::mbus/msgbus
-   {::wrk/executor  (ig/ref ::wrk/executor)
-    ::rds/redis     (ig/ref ::rds/redis)}
+   {::wrk/executor (ig/ref ::wrk/netty-executor)
+    ::rds/client   (ig/ref ::rds/client)
+    ::mtx/metrics  (ig/ref ::mtx/metrics)}
 
    :app.storage.tmp/cleaner
-   {::wrk/executor (ig/ref ::wrk/executor)}
+   {::wrk/executor (ig/ref ::wrk/netty-executor)}
 
    ::sto.gc-deleted/handler
    {::db/pool      (ig/ref ::db/pool)
@@ -231,9 +228,10 @@
     ::http/host                    (cf/get :http-server-host)
     ::http/router                  (ig/ref ::http/router)
     ::http/io-threads              (cf/get :http-server-io-threads)
+    ::http/max-worker-threads      (cf/get :http-server-max-worker-threads)
     ::http/max-body-size           (cf/get :http-server-max-body-size)
     ::http/max-multipart-body-size (cf/get :http-server-max-multipart-body-size)
-    ::wrk/executor                 (ig/ref ::wrk/executor)}
+    ::mtx/metrics                  (ig/ref ::mtx/metrics)}
 
    ::ldap/provider
    {:host           (cf/get :ldap-host)
@@ -261,26 +259,33 @@
    ::oidc.providers/generic
    {::http.client/client (ig/ref ::http.client/client)}
 
+   ::oidc/providers
+   [(ig/ref ::oidc.providers/google)
+    (ig/ref ::oidc.providers/github)
+    (ig/ref ::oidc.providers/gitlab)
+    (ig/ref ::oidc.providers/generic)]
+
    ::oidc/routes
    {::http.client/client (ig/ref ::http.client/client)
     ::db/pool            (ig/ref ::db/pool)
     ::setup/props        (ig/ref ::setup/props)
-    ::oidc/providers     {:google (ig/ref ::oidc.providers/google)
-                          :github (ig/ref ::oidc.providers/github)
-                          :gitlab (ig/ref ::oidc.providers/gitlab)
-                          :oidc   (ig/ref ::oidc.providers/generic)}
+    ::oidc/providers     (ig/ref ::oidc/providers)
     ::session/manager    (ig/ref ::session/manager)
     ::email/blacklist    (ig/ref ::email/blacklist)
     ::email/whitelist    (ig/ref ::email/whitelist)}
+
+   ::mgmt/routes
+   {::db/pool            (ig/ref ::db/pool)
+    ::setup/props        (ig/ref ::setup/props)}
 
    :app.http/router
    {::session/manager    (ig/ref ::session/manager)
     ::db/pool            (ig/ref ::db/pool)
     ::rpc/routes         (ig/ref ::rpc/routes)
-    ::rpc.doc/routes     (ig/ref ::rpc.doc/routes)
     ::setup/props        (ig/ref ::setup/props)
     ::mtx/routes         (ig/ref ::mtx/routes)
     ::oidc/routes        (ig/ref ::oidc/routes)
+    ::mgmt/routes        (ig/ref ::mgmt/routes)
     ::http.debug/routes  (ig/ref ::http.debug/routes)
     ::http.assets/routes (ig/ref ::http.assets/routes)
     ::http.ws/routes     (ig/ref ::http.ws/routes)
@@ -296,6 +301,7 @@
    {::db/pool         (ig/ref ::db/pool)
     ::mtx/metrics     (ig/ref ::mtx/metrics)
     ::mbus/msgbus     (ig/ref ::mbus/msgbus)
+    ::setup/props     (ig/ref ::setup/props)
     ::session/manager (ig/ref ::session/manager)}
 
    :app.http.assets/routes
@@ -306,23 +312,25 @@
 
    ::rpc/climit
    {::mtx/metrics        (ig/ref ::mtx/metrics)
-    ::wrk/executor       (ig/ref ::wrk/executor)
+    ::wrk/executor       (ig/ref ::wrk/netty-executor)
     ::climit/config      (cf/get :rpc-climit-config)
     ::climit/enabled     (contains? cf/flags :rpc-climit)}
 
    :app.rpc/rlimit
-   {::wrk/executor (ig/ref ::wrk/executor)}
+   {::wrk/executor (ig/ref ::wrk/netty-executor)}
 
    :app.rpc/methods
    {::http.client/client (ig/ref ::http.client/client)
     ::db/pool            (ig/ref ::db/pool)
-    ::wrk/executor       (ig/ref ::wrk/executor)
+    ::rds/pool           (ig/ref ::rds/pool)
+    :app.nitrate/client (ig/ref :app.nitrate/client)
+    ::wrk/executor       (ig/ref ::wrk/netty-executor)
     ::session/manager    (ig/ref ::session/manager)
     ::ldap/provider      (ig/ref ::ldap/provider)
     ::sto/storage        (ig/ref ::sto/storage)
     ::mtx/metrics        (ig/ref ::mtx/metrics)
     ::mbus/msgbus        (ig/ref ::mbus/msgbus)
-    ::rds/redis          (ig/ref ::rds/redis)
+    ::rds/client         (ig/ref ::rds/client)
 
     ::rpc/climit         (ig/ref ::rpc/climit)
     ::rpc/rlimit         (ig/ref ::rpc/rlimit)
@@ -330,16 +338,40 @@
     ::setup/props        (ig/ref ::setup/props)
 
     ::email/blacklist    (ig/ref ::email/blacklist)
-    ::email/whitelist    (ig/ref ::email/whitelist)}
+    ::email/whitelist    (ig/ref ::email/whitelist)
 
-   :app.rpc.doc/routes
-   {:app.rpc/methods (ig/ref :app.rpc/methods)}
+    :app.loggers.database/reporter
+    (ig/ref :app.loggers.database/reporter)
 
-   :app.rpc/routes
-   {::rpc/methods     (ig/ref :app.rpc/methods)
-    ::db/pool         (ig/ref ::db/pool)
-    ::session/manager (ig/ref ::session/manager)
-    ::setup/props     (ig/ref ::setup/props)}
+    :app.loggers.mattermost/reporter
+    (ig/ref :app.loggers.mattermost/reporter)}
+
+   :app.nitrate/client
+   {::http.client/client (ig/ref ::http.client/client)
+    ::setup/shared-keys  (ig/ref ::setup/shared-keys)}
+
+   :app.rpc/management-methods
+   {::http.client/client (ig/ref ::http.client/client)
+    ::db/pool            (ig/ref ::db/pool)
+    ::rds/pool           (ig/ref ::rds/pool)
+    ::wrk/executor       (ig/ref ::wrk/netty-executor)
+    ::session/manager    (ig/ref ::session/manager)
+    ::sto/storage        (ig/ref ::sto/storage)
+    ::mtx/metrics        (ig/ref ::mtx/metrics)
+    ::mbus/msgbus        (ig/ref ::mbus/msgbus)
+    :app.nitrate/client (ig/ref :app.nitrate/client)
+    ::rds/client         (ig/ref ::rds/client)
+    ::setup/props        (ig/ref ::setup/props)}
+
+   ::rpc/routes
+   {::rpc/methods            (ig/ref :app.rpc/methods)
+    ::rpc/management-methods (ig/ref :app.rpc/management-methods)
+
+    ;; FIXME: revisit if db/pool is necessary here
+    ::db/pool                (ig/ref ::db/pool)
+    ::session/manager        (ig/ref ::session/manager)
+    ::setup/props            (ig/ref ::setup/props)
+    ::setup/shared-keys      (ig/ref ::setup/shared-keys)}
 
    ::wrk/registry
    {::mtx/metrics (ig/ref ::mtx/metrics)
@@ -427,6 +459,14 @@
     ;; module requires the migrations to run before initialize.
     ::migrations (ig/ref :app.migrations/migrations)}
 
+   ::setup/shared-keys
+   {::setup/props (ig/ref ::setup/props)
+    :nitrate (cf/get :nitrate-shared-key)
+    :exporter (cf/get :exporter-shared-key)}
+
+   ::setup/clock
+   {}
+
    :app.loggers.audit.archive-task/handler
    {::setup/props        (ig/ref ::setup/props)
     ::db/pool            (ig/ref ::db/pool)
@@ -470,12 +510,13 @@
                             (cf/get :objects-storage-s3-bucket))
     ::sto.s3/io-threads (or (cf/get :storage-assets-s3-io-threads)
                             (cf/get :objects-storage-s3-io-threads))
-    ::wrk/executor      (ig/ref ::wrk/executor)}
+
+    ::wrk/netty-io-executor
+    (ig/ref ::wrk/netty-io-executor)}
 
    :app.storage.fs/backend
    {::sto.fs/directory (or (cf/get :storage-assets-fs-directory)
                            (cf/get :objects-storage-fs-directory))}})
-
 
 (def worker-config
   {::wrk/cron
@@ -512,7 +553,7 @@
         :task :audit-log-gc})]}
 
    ::wrk/dispatcher
-   {::rds/redis   (ig/ref ::rds/redis)
+   {::rds/client  (ig/ref ::rds/client)
     ::mtx/metrics (ig/ref ::mtx/metrics)
     ::db/pool     (ig/ref ::db/pool)
     ::wrk/tenant  (cf/get :tenant)}
@@ -521,7 +562,7 @@
    {::wrk/parallelism (cf/get ::worker-default-parallelism 1)
     ::wrk/queue       :default
     ::wrk/tenant      (cf/get :tenant)
-    ::rds/redis       (ig/ref ::rds/redis)
+    ::rds/client      (ig/ref ::rds/client)
     ::wrk/registry    (ig/ref ::wrk/registry)
     ::mtx/metrics     (ig/ref ::mtx/metrics)
     ::db/pool         (ig/ref ::db/pool)}
@@ -530,7 +571,7 @@
    {::wrk/parallelism (cf/get ::worker-webhook-parallelism 1)
     ::wrk/queue       :webhooks
     ::wrk/tenant      (cf/get :tenant)
-    ::rds/redis       (ig/ref ::rds/redis)
+    ::rds/client      (ig/ref ::rds/client)
     ::wrk/registry    (ig/ref ::wrk/registry)
     ::mtx/metrics     (ig/ref ::mtx/metrics)
     ::db/pool         (ig/ref ::db/pool)}})

@@ -9,7 +9,6 @@
    [app.common.files.helpers :as cfh]
    [app.common.geom.shapes :as gsh]
    [app.common.types.modifiers :as ctm]
-   [app.common.types.path :as path]
    [app.common.types.shape :as cts]
    [app.main.data.helpers :as dsh]
    [app.main.data.workspace.text-defaults :as text-defaults]
@@ -80,10 +79,6 @@
                    (-> (merge shape (click-text-geometry default-font))
                        (cts/setup-shape))
 
-                   (or (cfh/path-shape? shape)
-                       (cfh/bool-shape? shape))
-                   (update :content path/content)
-
                    :always
                    (dissoc :initialized? :click-draw?))]
 
@@ -96,7 +91,7 @@
               (rx/of (dwsh/add-shape shape {:no-select? (= tool :curve)}))
               (if (cfh/frame-shape? shape)
                 (rx/concat
-                 (->> (mw/ask! {:cmd :selection/query
+                 (->> (mw/ask! {:cmd :index/query-selection
                                 :page-id page-id
                                 :rect (:selrect shape)
                                 :include-frames? true

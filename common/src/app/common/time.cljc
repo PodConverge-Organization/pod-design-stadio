@@ -52,6 +52,7 @@
    [cuerdas.core :as str])
   #?(:clj
      (:import
+      java.time.Clock
       java.time.Duration
       java.time.Instant
       java.time.OffsetDateTime
@@ -63,9 +64,36 @@
       java.time.temporal.TemporalAmount
       java.time.temporal.TemporalUnit)))
 
+(declare inst)
+
+#?(:clj (def ^:dynamic *clock* (Clock/systemDefaultZone)))
+
+#?(:clj
+   (defn clock?
+     [o]
+     (instance? Clock o)))
+
+#?(:clj
+   (defn get-system-clock
+     []
+     (Clock/systemDefaultZone)))
+
+#?(:clj
+   (defn offset-clock
+     [offset]
+     (Clock/offset ^Clock (Clock/systemDefaultZone) ^Duration offset)))
+
+#?(:clj
+   (defn fixed-clock
+     [instant]
+     (Clock/fixed ^Instant (inst instant)
+                  ^ZoneId (ZoneId/of "Z"))))
+
+
+
 (defn now
   []
-  #?(:clj (Instant/now)
+  #?(:clj (Instant/now *clock*)
      :cljs (new js/Date)))
 
 ;; --- DURATION
@@ -119,9 +147,9 @@
      [o]
      (instance? Duration o)))
 
-(defn duration
-  [ms-or-obj]
-  #?(:clj
+#?(:clj
+   (defn duration
+     [ms-or-obj]
      (cond
        (string? ms-or-obj)
        (Duration/parse (str "PT" ms-or-obj))
@@ -130,14 +158,10 @@
        ms-or-obj
 
        (integer? ms-or-obj)
-
        (Duration/ofMillis ms-or-obj)
 
        :else
-       (obj->duration ms-or-obj))
-
-     :cljs
-     (clj->js ms-or-obj)))
+       (obj->duration ms-or-obj))))
 
 #?(:clj
    (defn parse-duration
@@ -262,6 +286,9 @@
 (defn inst
   [s]
   (cond
+    (nil? s)
+    s
+
     (inst? s)
     s
 
@@ -292,7 +319,7 @@
 
 (defn plus
   [d ta]
-  (let [ta (duration ta)]
+  (let [ta #?(:clj (duration ta) :cljs ta)]
     (cond
       #?@(:clj [(duration? d) (.plus ^Duration d ^TemporalAmount ta)])
 
@@ -307,7 +334,7 @@
 
 (defn minus
   [d ta]
-  (let [^TemporalAmount ta (duration ta)]
+  (let [ta #?(:clj (duration ta) :cljs ta)]
     (cond
       #?@(:clj [(duration? d) (.minus ^Duration d ^TemporalAmount ta)])
 
@@ -338,7 +365,7 @@
      (dfn-diff t2 t1)))
 
 #?(:cljs
-   (defn set-default-locale!
+   (defn set-default-locale
      [locale]
      (when-let [locale (unchecked-get locales locale)]
        (dfn-set-default-options #js {:locale locale}))))
@@ -429,3 +456,8 @@
         :encode/json format-duration
         ::oapi/type "string"
         ::oapi/format "duration"}})))
+
+#?(:cljs
+   (extend-protocol cljs.core/IEncodeJS
+     js/Date
+     (-clj->js [x] x)))

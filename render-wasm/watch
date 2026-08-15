@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-set -x
 
 _SCRIPT_DIR=$(dirname $0);
 pushd $_SCRIPT_DIR;
 
 . ./_build_env
 
-export CARGO_BUILD_TARGET=${CARGO_BUILD_TARGET:-"wasm32-unknown-emscripten"};
-export SKIA_BINARIES_URL=${SKIA_BINARIES_URL:-"https://github.com/penpot/skia-binaries/releases/download/0.86.0-1/skia-binaries-cab569e6478958ca0783-wasm32-unknown-emscripten-gl-svg-textlayout-binary-cache-webp.tar.gz"}
-
+set -x
+build;
+copy_artifacts "../frontend/resources/public/js";
+copy_shared_artifact;
 
 pushd $_SCRIPT_DIR;
+
 cargo watch \
-      -x "build $_CARGO_PARAMS" \
-      -s "cp target/wasm32-unknown-emscripten/$_BUILD_MODE/render_wasm.js ../frontend/resources/public/js/" \
-      -s "cp target/wasm32-unknown-emscripten/$_BUILD_MODE/render_wasm.wasm ../frontend/resources/public/js/" \
-      -s "sed -i 's/render_wasm.wasm/render_wasm.wasm?version=develop/g' ../frontend/resources/public/js/render_wasm.js" \
+      -x "build $CARGO_PARAMS" \
+      -s "./build" \
       -s "echo 'DONE\n'";
 
 popd

@@ -13,17 +13,21 @@
    [app.main.data.helpers :as dsh]
    [app.main.data.modal :as modal]
    [app.main.data.workspace :as dw]
+   [app.main.features :as features]
    [app.main.refs :as refs]
    [app.main.store :as st]
-   [app.main.ui.components.title-bar :refer [title-bar]]
+   [app.main.ui.components.title-bar :refer [title-bar*]]
    [app.main.ui.context :as ctx]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
+   [app.main.ui.ds.foundations.assets.icon :as i]
    [app.main.ui.hooks :as hooks]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.main.ui.notifications.badge :refer [badge-notification]]
+   [app.render-wasm.api :as wasm.api]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.keyboard :as kbd]
+   [app.util.timers :as timers]
    [cuerdas.core :as str]
    [okulary.core :as l]
    [rumext.v2 :as mf]))
@@ -51,16 +55,36 @@
              refs/workspace-data
              =))
 
+
+
 ;; --- Page Item
 
 (mf/defc page-item
   {::mf/wrap-props false}
-  [{:keys [page index deletable? selected? editing? hovering?]}]
+  [{:keys [page index deletable? selected? editing? hovering? current-page-id]}]
   (let [input-ref    (mf/use-ref)
         id           (:id page)
         delete-fn    (mf/use-fn (mf/deps id) #(st/emit! (dw/delete-page id)))
         navigate-fn  (mf/use-fn (mf/deps id) #(st/emit! :interrupt (dcm/go-to-workspace :page-id id)))
         read-only?   (mf/use-ctx ctx/workspace-read-only?)
+
+        on-click
+        (mf/use-fn
+         (mf/deps id)
+         (fn []
+           ;; For the wasm renderer, apply a blur effect to the viewport canvas
+           ;; when we navigate to a different page.
+           (if (and (features/active-feature? @st/state "render-wasm/v1")
+                    (not= id current-page-id))
+             (do
+               (wasm.api/capture-canvas-pixels)
+               (wasm.api/apply-canvas-blur)
+               ;; NOTE: it seems we need two RAF so the blur is actually applied and visible
+               ;;       in the canvas :(
+               (timers/raf
+                (fn []
+                  (timers/raf navigate-fn))))
+             (navigate-fn))))
 
         on-delete
         (mf/use-fn
@@ -112,7 +136,7 @@
          :data {:id id
                 :index index
                 :name (:name page)}
-         :draggable? (not read-only?))
+         :draggable? (and (not read-only?) (not editing?)))
 
         on-context-menu
         (mf/use-fn
@@ -154,11 +178,11 @@
                     :selected selected?)
             :data-testid (dm/str "page-" id)
             :tab-index "0"
-            :on-click navigate-fn
+            :on-click on-click
             :on-double-click on-double-click
             :on-context-menu on-context-menu}
       [:div {:class (stl/css :page-icon)}
-       i/document]
+       deprecated-icon/document]
 
       (if editing?
         [:*
@@ -175,18 +199,19 @@
          [:div {:class  (stl/css :page-actions)}
           (when (and deletable? (not read-only?))
             [:button {:on-click on-delete}
-             i/delete])]])]]))
+             deprecated-icon/delete])]])]]))
 
 ;; --- Page Item Wrapper
 
 (mf/defc page-item-wrapper
   {::mf/wrap-props false}
-  [{:keys [page-id index deletable? selected? editing?]}]
+  [{:keys [page-id index deletable? selected? editing? current-page-id]}]
   (let [page-ref (mf/with-memo [page-id]
                    (make-page-ref page-id))
         page     (mf/deref page-ref)]
     [:& page-item {:page page
                    :index index
+                   :current-page-id current-page-id
                    :deletable? deletable?
                    :selected? selected?
                    :editing? editing?}]))
@@ -201,7 +226,7 @@
         editing-page-id (mf/deref refs/editing-page-item)
         current-page-id (mf/use-ctx ctx/current-page-id)]
     [:ul {:class (stl/css :page-list)}
-     [:& hooks/sortable-container {}
+     [:> hooks/sortable-container* {}
       (for [[index page-id] (d/enumerate pages)]
         [:& page-item-wrapper
          {:page-id page-id
@@ -209,9 +234,12 @@
           :deletable? deletable?
           :editing? (= page-id editing-page-id)
           :selected? (= page-id current-page-id)
+          :current-page-id current-page-id
           :key page-id}])]]))
 
 ;; --- Sitemap Toolbox
+
+(def ^:private add-page-enabled? false)
 
 (mf/defc sitemap*
   [{:keys [height collapsed on-toggle-collapsed]}]
@@ -231,24 +259,24 @@
     [:div {:class (stl/css :sitemap)
            :style {:--height (dm/str height "px")}}
 
-     [:& title-bar {:collapsable   true
-                    :collapsed     collapsed
-                    :on-collapsed  on-toggle-collapsed
-                    :all-clickable true
-                    :title         (tr "workspace.sidebar.sitemap")
-                    :class         (stl/css :title-spacing-sitemap)}
+     [:> title-bar* {:collapsable   true
+                     :collapsed     collapsed
+                     :on-collapsed  on-toggle-collapsed
+                     :all-clickable true
+                     :title         (tr "workspace.sidebar.sitemap")
+                     :class         (stl/css :title-spacing-sitemap)}
 
       (if ^boolean read-only?
         (when ^boolean (:can-edit permissions)
           [:& badge-notification {:is-focus true
                                   :size :small
                                   :content (tr "labels.view-only")}])
-;;         [:> icon-button* {:variant "ghost"
-;;                           :class (stl/css :add-page)
-;;                           :aria-label (tr "workspace.sidebar.sitemap.add-page")
-;;                           :on-click on-create
-;;                           :icon "add"}]
-                          )]
+        (when add-page-enabled?
+          [:> icon-button* {:variant "ghost"
+                            :class (stl/css :add-page)
+                            :aria-label (tr "workspace.sidebar.sitemap.add-page")
+                            :on-click on-create
+                            :icon i/add}]))]
 
      (when-not ^boolean collapsed
        [:div {:class (stl/css :tool-window-content)}

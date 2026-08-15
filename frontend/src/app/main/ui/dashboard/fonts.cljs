@@ -17,9 +17,9 @@
    [app.main.repo :as rp]
    [app.main.store :as st]
    [app.main.ui.components.context-menu-a11y :refer [context-menu*]]
-   [app.main.ui.components.file-uploader :refer [file-uploader]]
+   [app.main.ui.components.file-uploader :refer [file-uploader*]]
    [app.main.ui.ds.product.empty-placeholder :refer [empty-placeholder*]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.main.ui.notifications.context-notification :refer [context-notification]]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
@@ -184,11 +184,11 @@
                  :on-click on-click
                  :tab-index "0"}
         [:span (tr "labels.add-custom-font")]
-        [:& file-uploader {:input-id "font-upload"
-                           :accept accept-font-types
-                           :multi true
-                           :ref input-ref
-                           :on-selected on-selected}]]
+        [:> file-uploader* {:input-id "font-upload"
+                            :accept accept-font-types
+                            :multi true
+                            :ref input-ref
+                            :on-selected on-selected}]]
 
        (when-let [url cf/terms-of-service-uri]
          [:& context-notification {:content (tr "dashboard.fonts.hero-text2" url)
@@ -239,7 +239,7 @@
            [:div {:class (stl/css :table-field :options)}
             (when (:height-warning? item)
               [:span {:class (stl/css :icon :failure)}
-               i/msg-neutral])
+               deprecated-icon/msg-neutral])
 
             [:button {:on-click on-upload
                       :data-id (dm/str id)
@@ -254,7 +254,7 @@
             [:span {:class (stl/css :icon :close)
                     :data-id (dm/str id)
                     :on-click on-delete}
-             i/close]]]))]]))
+             deprecated-icon/close]]]))]]))
 
 (mf/defc installed-font-context-menu
   {::mf/props :obj
@@ -360,7 +360,9 @@
              (st/emit! (modal/show options)))))]
 
     [:div {:class (stl/css :font-item :table-row)}
-     [:div {:class (stl/css :table-field :family)}
+     [:div {:class (stl/css-case :table-field true
+                                 :family true
+                                 :is-edition edition?)}
       (if ^boolean edition?
         [:input {:type "text"
                  :auto-focus true
@@ -381,7 +383,7 @@
             {:class (stl/css :icon :close)
              :data-id (dm/str id)
              :on-click on-delete-variant}
-            i/add])])]
+            deprecated-icon/add])])]
 
      (if ^boolean edition?
        [:div {:class (stl/css :table-field :options)}
@@ -393,13 +395,13 @@
          (tr "labels.save")]
         [:button {:class (stl/css :icon :close)
                   :on-click on-cancel}
-         i/close]]
+         deprecated-icon/close]]
 
        (when can-edit
          [:div {:class (stl/css :table-field :options)}
           [:span {:class (stl/css :icon)
                   :on-click on-menu-open}
-           i/menu]
+           deprecated-icon/menu]
 
           [:& installed-font-context-menu
            {:on-close on-menu-close
@@ -443,13 +445,13 @@
 
        (nil? fonts)
        [:div {:class (stl/css :fonts-placeholder)}
-        [:div {:class (stl/css :icon)} i/loader]
+        [:div {:class (stl/css :icon)} deprecated-icon/loader]
         [:div {:class (stl/css :label)} (tr "dashboard.loading-fonts")]]
 
        :else
        (if ^boolean can-edit
          [:div {:class (stl/css :fonts-placeholder)}
-          [:div {:class (stl/css :icon)} i/text]
+          [:div {:class (stl/css :icon)} deprecated-icon/text]
           [:div {:class (stl/css :label)} (tr "dashboard.fonts.empty-placeholder")]]
 
          [:> empty-placeholder*

@@ -17,7 +17,6 @@
 
   --app-background: var(--color-background-primary);
   --loader-background: var(--color-background-primary);
-  --panel-title-background-color: var(--color-background-secondary);
 
   // BUTTONS
   --button-foreground-hover: var(--color-accent-primary);
@@ -245,13 +244,6 @@
   --assets-component-second-border-selected: var(--color-background-primary);
   --assets-component-hightlight: var(--color-accent-secondary);
 
-  --radio-btns-background-color: var(--color-background-tertiary);
-  --radio-btn-background-color-selected: var(--color-background-quaternary);
-  --radio-btn-foreground-color: var(--color-foreground-secondary);
-  --radio-btn-foreground-color-selected: var(--color-accent-primary);
-  --radio-btn-border-color: var(--color-background-tertiary);
-  --radio-btn-border-color-selected: var(--color-background-quaternary);
-
   --library-name-foreground-color: var(--color-foreground-primary);
   --library-content-foreground-color: var(--color-foreground-secondary);
 
@@ -314,7 +306,7 @@
   --modal-button-foreground-color-error: var(--color-foreground-primary);
   --modal-link-foreground-color: var(--color-accent-primary);
   --modal-border-color: var(--color-background-quaternary);
-  --modal-separator-backogrund-color: var(--color-background-quaternary);
+  --modal-separator-background-color: var(--color-background-quaternary);
   --modal-navigator-foreground-color-rest: var(--color-background-quaternary);
   --modal-navigator-foreground-color-active: var(--color-accent-primary);
 
@@ -384,11 +376,6 @@
   --dashboard-list-foreground-color: var(--color-foreground-primary);
   --dashboard-list-text-foreground-color: var(--color-foreground-secondary);
 
-  --flow-tag-background-color: var(--color-background-tertiary);
-  --flow-tag-foreground-color: var(--color-foreground-secondary);
-  --flow-tag-background-color-hover: var(--color-background-quaternary);
-  --flow-tag-foreground-color-hover: var(--color-accent-primary);
-
   --communication-tag-background-color: var(--color-foreground-primary);
   --communication-tag-foreground-color: var(--color-background-tertiary);
 
@@ -428,13 +415,6 @@
   --tab-background-color-selected: var(--color-background-primary);
   --tab-border-color: var(--color-background-tertiary);
   --tab-border-color-selected: var(--color-background-secondary);
-
-  --radio-btns-background-color: var(--color-background-tertiary);
-  --radio-btn-background-color-selected: var(--color-background-primary);
-  --radio-btn-foreground-color: var(--color-foreground-secondary);
-  --radio-btn-foreground-color-selected: var(--color-accent-primary);
-  --radio-btn-border-color: var(--color-background-tertiary);
-  --radio-btn-border-color-selected: var(--color-background-secondary);
 
   --button-icon-background-color-selected: var(--color-background-primary);
   --button-icon-border-color-selected: var(--color-background-secondary);

@@ -14,6 +14,7 @@
    [app.common.schema :as sm]
    [app.common.types.color :as ct]
    [app.config :as cfg]
+   [app.main.ui.ds.tooltip :refer [tooltip*]]
    [app.util.color :as uc]
    [app.util.i18n :refer [tr]]
    [cuerdas.core :as str]
@@ -62,11 +63,14 @@
    [:class {:optional true} :string]
    [:size {:optional true} [:enum "small" "medium" "large"]]
    [:active {:optional true} ::sm/boolean]
+   [:has-errors {:optional true} [:maybe ::sm/boolean]]
+   [:show-tooltip {:optional true} [:maybe ::sm/boolean]]
+   [:tooltip-content {:optional true} ::sm/any]
    [:on-click {:optional true} ::sm/fn]])
 
 (mf/defc swatch*
   {::mf/schema (sm/schema schema:swatch)}
-  [{:keys [background on-click size active class]
+  [{:keys [background class size active has-errors tooltip-content on-click show-tooltip]
     :rest props}]
   (let [;; NOTE: this code is only relevant for storybook, because
         ;; storybook is unable to pass in a comfortable way a complex
@@ -82,6 +86,7 @@
         id?            (some? (:ref-id background))
         element-type   (if read-only? "div" "button")
         button-type    (if (not read-only?) "button" nil)
+        show-tooltip   (if (some? show-tooltip) show-tooltip true)
         size           (or size "small")
         active         (or active false)
         gradient-type  (-> background :gradient :type)
@@ -90,6 +95,15 @@
                         :stops gradient-stops}
         image          (:image background)
         format         (if id? "rounded" "square")
+        element-id     (mf/use-id)
+        has-opacity?  (and (some? (:color background))
+                           (< (:opacity background) 1))
+        on-click
+        (mf/use-fn
+         (mf/deps background on-click)
+         (fn [event]
+           (when (fn? on-click)
+             (^function on-click background event))))
 
         class
         (dm/str class " " (stl/css-case
@@ -106,23 +120,34 @@
         (mf/spread-props props {:class class
                                 :on-click on-click
                                 :type button-type
-                                :title (color-title background)})]
+                                :aria-labelledby element-id})
+        children (mf/html
+                  [:> element-type props
+                   (cond
+                     (some? gradient-type)
+                     [:div {:class (stl/css :swatch-gradient)
+                            :style {:background-image (str (uc/gradient->css gradient-data) ", repeating-conic-gradient(lightgray 0% 25%, white 0% 50%)")}}]
 
-    [:> element-type props
-     (cond
+                     (some? image)
+                     (let [uri (cfg/resolve-file-media image)]
+                       [:div {:class (stl/css :swatch-image)
+                              :style {:background-image (str/ffmt "url(%)" uri)}}])
+                     has-errors
+                     [:div {:class (stl/css :swatch-error)}]
+                     :else
+                     [:div {:class (stl/css :swatch-opacity)}
+                      [:div {:class (stl/css :swatch-solid-side)
+                             :style {:background (uc/color->background (assoc background :opacity 1))}}]
+                      [:div {:class (stl/css-case :swatch-opacity-side true
+                                                  :swatch-opacity-side-transparency has-opacity?
+                                                  :swatch-opacity-side-solid-color (not has-opacity?))
+                             :style {"--solid-color-overlay" (str (uc/color->background background))}}]])])]
 
-       (some? gradient-type)
-       [:span {:class (stl/css :swatch-gradient)
-               :style {:background-image (str (uc/gradient->css gradient-data) ", repeating-conic-gradient(lightgray 0% 25%, white 0% 50%)")}}]
+    (if show-tooltip
+      [:> tooltip* {:content (if tooltip-content
+                               tooltip-content
+                               (color-title background))
+                    :id element-id}
+       children]
 
-       (some? image)
-       (let [uri (cfg/resolve-file-media image)]
-         [:span {:class (stl/css :swatch-image)
-                 :style {:background-image (str/ffmt "url(%)" uri)}}])
-
-       :else
-       [:span {:class (stl/css :swatch-opacity)}
-        [:span {:class (stl/css :swatch-solid-side)
-                :style {:background (uc/color->background (assoc background :opacity 1))}}]
-        [:span {:class (stl/css :swatch-opacity-side)
-                :style {:background (uc/color->background background)}}]])]))
+      children)))

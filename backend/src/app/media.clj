@@ -17,6 +17,7 @@
    [app.common.time :as ct]
    [app.config :as cf]
    [app.db :as-alias db]
+   [app.http.client :as http]
    [app.storage :as-alias sto]
    [app.storage.tmp :as tmp]
    [buddy.core.bytes :as bb]
@@ -34,19 +35,19 @@
    javax.xml.parsers.SAXParserFactory
    org.apache.commons.io.IOUtils
    org.im4java.core.ConvertCmd
-   org.im4java.core.IMOperation
-   org.im4java.core.Info))
+   org.im4java.core.IMOperation))
+
+(def default-max-file-size
+  (* 1024 1024 10)) ; 10 MiB
 
 (def schema:upload
-  (sm/register!
-   ^{::sm/type ::upload}
-   [:map {:title "Upload"}
-    [:filename :string]
-    [:size ::sm/int]
-    [:path ::fs/path]
-    [:mtype {:optional true} :string]
-    [:headers {:optional true}
-     [:map-of :string :string]]]))
+  [:map {:title "Upload"}
+   [:filename :string]
+   [:size ::sm/int]
+   [:path ::fs/path]
+   [:mtype {:optional true} :string]
+   [:headers {:optional true}
+    [:map-of :string :string]]])
 
 (def ^:private schema:input
   [:map {:title "Input"}
@@ -118,7 +119,7 @@
 (defn- parse-svg
   [text]
   (let [text (strip-doctype text)]
-    (dm/with-open [istream (IOUtils/toInputStream text "UTF-8")]
+    (dm/with-open [istream (IOUtils/toInputStream ^String text "UTF-8")]
       (xml/parse istream secure-parser-factory))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -222,17 +223,18 @@
   ;; If we are processing an animated gif we use the first frame with -scene 0
   (let [dim-result (sh/sh "identify" "-format" "%w %h\n" path)
         orient-result (sh/sh "identify" "-format" "%[EXIF:Orientation]\n" path)]
-    (if (and (= 0 (:exit dim-result))
-             (= 0 (:exit orient-result)))
+    (when (= 0 (:exit dim-result))
       (let [[w h] (-> (:out dim-result)
                       str/trim
                       (clojure.string/split #"\s+")
                       (->> (mapv #(Integer/parseInt %))))
-            orientation (-> orient-result :out str/trim)]
-        (case orientation
-          ("6" "8") {:width h :height w} ; Rotated 90 or 270 degrees
-          {:width w :height h}))         ; Normal or unknown orientation
-      nil)))
+            orientation-exit (:exit orient-result)
+            orientation      (-> orient-result :out str/trim)]
+        (if (= 0 orientation-exit)
+          (case orientation
+            ("6" "8") {:width h :height w} ; Rotated 90 or 270 degrees
+            {:width w :height h})          ; Normal or unknown orientation
+          {:width w :height h})))))        ; If orientation can't be read, use dimensions as-is
 
 (defmethod process :info
   [{:keys [input] :as params}]
@@ -243,27 +245,39 @@
           (ex/raise :type :validation
                     :code :invalid-svg-file
                     :hint "uploaded svg does not provides dimensions"))
-        (merge input info {:ts (ct/now)}))
+        (merge input info {:ts (ct/now) :size (fs/size path)}))
 
-      (let [instance (Info. (str path))
-            mtype'   (.getProperty instance "Mime type")]
+      (let [path-str      (str path)
+            identify-res  (sh/sh "identify" "-format" "image/%[magick]\n" path-str)
+            ;; identify prints one line per frame (animated GIFs, etc.); we take the first one
+            mtype'        (if (zero? (:exit identify-res))
+                            (-> identify-res
+                                :out
+                                str/trim
+                                (str/split #"\s+" 2)
+                                first
+                                str/lower)
+                            (ex/raise :type :validation
+                                      :code :invalid-image
+                                      :hint "invalid image"))
+            {:keys [width height]}
+            (or (get-dimensions-with-orientation path-str)
+                (do
+                  (l/warn "Failed to read image dimensions with orientation" {:path path})
+                  (ex/raise :type :validation
+                            :code :invalid-image
+                            :hint "invalid image")))]
         (when (and (string? mtype)
-                   (not= mtype mtype'))
+                   (not= (str/lower mtype) mtype'))
           (ex/raise :type :validation
                     :code :media-type-mismatch
                     :hint (str "Seems like you are uploading a file whose content does not match the extension."
                                "Expected: " mtype ". Got: " mtype')))
-        (let [{:keys [width height]}
-              (or (get-dimensions-with-orientation (str path))
-                  (do
-                    (l/warn "Failed to read image dimensions with orientation; falling back to im4java"
-                            {:path path})
-                    {:width  (.getPageWidth instance)
-                     :height (.getPageHeight instance)}))]
-          (assoc input
-                 :width  width
-                 :height height
-                 :ts (ct/now)))))))
+        (assoc input
+               :width  width
+               :height height
+               :size (fs/size path)
+               :ts (ct/now))))))
 
 (defmethod process-error org.im4java.core.InfoException
   [error]
@@ -271,6 +285,54 @@
             :code :invalid-image
             :hint "invalid image"
             :cause error))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; IMAGE HELPERS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn download-image
+  "Download an image from the provided URI and return the media input object"
+  [{:keys [::http/client]} uri]
+  (letfn [(parse-and-validate [{:keys [headers] :as response}]
+            (let [size     (some-> (get headers "content-length") d/parse-integer)
+                  mtype    (get headers "content-type")
+                  format   (cm/mtype->format mtype)
+                  max-size (cf/get :media-max-file-size default-max-file-size)]
+
+              (when-not size
+                (ex/raise :type :validation
+                          :code :unknown-size
+                          :hint "seems like the url points to resource with unknown size"))
+
+              (when (> size max-size)
+                (ex/raise :type :validation
+                          :code :file-too-large
+                          :hint (str/ffmt "the file size % is greater than the maximum %"
+                                          size
+                                          default-max-file-size)))
+
+              (when (nil? format)
+                (ex/raise :type :validation
+                          :code :media-type-not-allowed
+                          :hint "seems like the url points to an invalid media object"))
+
+              {:size size :mtype mtype :format format}))]
+
+    (let [{:keys [body] :as response} (http/req! client
+                                                 {:method :get :uri uri}
+                                                 {:response-type :input-stream})
+          {:keys [size mtype]} (parse-and-validate response)
+          path    (tmp/tempfile :prefix "penpot.media.download.")
+          written (io/write* path body :size size)]
+
+      (when (not= written size)
+        (ex/raise :type :internal
+                  :code :mismatch-write-size
+                  :hint "unexpected state: unable to write to file"))
+
+      {;; :size size
+       :path path
+       :mtype mtype})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; FONTS

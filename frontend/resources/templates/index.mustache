@@ -1,70 +1,108 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <!-- Google Tag Manager -->
-  <script>(function (w, d, s, l, i) {
-    w[l] = w[l] || [];
-    w[l].push({
-      'gtm.start':
-        new Date().getTime(), event: 'gtm.js'
-    });
-    var f = d.getElementsByTagName(s)[0],
-      j = d.createElement(s), dl = l != 'dataLayer' ? '&l=' + l : '';
-    j.async = true;
-    j.src =
-      'https://www.googletagmanager.com/gtm.js?id=' + i + dl;
-    f.parentNode.insertBefore(j, f);
-  })(window, document, 'script', 'dataLayer', 'GTM-MQJ44V42');</script>
-  <!-- End Google Tag Manager -->
-  <meta charset="utf-8"/>
-  <meta http-equiv="x-ua-compatible" content="ie=edge"/>
-  <title>PodConverge Design Tool – Create & Sell Custom Products with AI</title>
+  <head>
+    <!-- Google Tag Manager -->
+    <script>(function (w, d, s, l, i) {
+      w[l] = w[l] || [];
+      w[l].push({
+        'gtm.start':
+          new Date().getTime(), event: 'gtm.js'
+      });
+      var f = d.getElementsByTagName(s)[0],
+        j = d.createElement(s), dl = l != 'dataLayer' ? '&l=' + l : '';
+      j.async = true;
+      j.src =
+        'https://www.googletagmanager.com/gtm.js?id=' + i + dl;
+      f.parentNode.insertBefore(j, f);
+    })(window, document, 'script', 'dataLayer', 'GTM-MQJ44V42');</script>
+    <!-- End Google Tag Manager -->
 
-  <meta name="description"
-        content="Design products and marketing content side by side in one powerful design tool. Built for creators, powered by AI, connected to fulfillment.">
-  <meta property="og:locale" content="en_US">
-  <meta property="og:title" content="PodConverge Design Studio – Create & Sell Smarter">
-  <meta property="og:description"
-        content="Design physical products and marketing content in one seamless workspace. From idea to fulfillment, all in one platform.">
-  <meta property="og:image"
-        content="https://cdn.prod.website-files.com/67f9e37d2267aa9a7130aa95/6812fde133475e03afd36774_Home%20page%20hero.avif">
-  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
-  <link id="theme" href="css/main.css?ts={{& ts}}" rel="stylesheet" type="text/css" />
-  {{#isDebug}}
-    <link href="css/debug.css?ts={{& ts}}" rel="stylesheet" type="text/css" />
-  {{/isDebug}}
+    <meta charset="utf-8" />
+    <meta http-equiv="x-ua-compatible" content="ie=edge" />
+    <title>PodConverge Design Tool – Create & Sell Custom Products with AI</title>
 
-  <link rel="icon" type="image/svg+xml" href="images/favicon.svg"/>
-  {{# manifest}}
-    <script>window.penpotWorkerURI = "{{& worker_main}}"</script>
-    <script defer src="{{& config}}"></script>
-    <script defer src="{{& polyfills}}"></script>
-  {{/manifest}}
+    <meta
+      name="description"
+      content="Design products and marketing content side by side in one powerful design tool. Built for creators, powered by AI, connected to fulfillment."
+    >
+    <meta property="og:locale" content="en_US">
+    <meta property="og:title" content="PodConverge Design Studio – Create & Sell Smarter">
+    <meta
+      property="og:description"
+      content="Design physical products and marketing content in one seamless workspace. From idea to fulfillment, all in one platform."
+    >
+    <meta
+      property="og:image"
+      content="https://cdn.prod.website-files.com/67f9e37d2267aa9a7130aa95/6812fde133475e03afd36774_Home%20page%20hero.avif"
+    >
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
 
-  <script>
-    window.penpotTranslations = JSON.parse({{& translations}});
-    window.penpotVersion = "%version%";
-    window.penpotBuildDate = "%buildDate%";
-  </script>
-  <!--cookie-consent-->
-</head>
-<body>
-<!-- Google Tag Manager (noscript) -->
-<noscript>
-  <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-MQJ44V42"
-          height="0" width="0" style="display:none;visibility:hidden"></iframe>
-</noscript>
-<!-- End Google Tag Manager (noscript) -->
-{{> ../public/images/sprites/symbol/icons.svg }}
-{{> ../public/images/sprites/symbol/cursors.svg }}
-{{> ../public/images/sprites/assets.svg }}
-<div id="app"></div>
-<section id="modal"></section>
+    <link
+      id="theme"
+      href="css/main.css?version={{& version_tag}}"
+      rel="stylesheet"
+      type="text/css"
+    />
+    <link href="css/ui.css?ts={{& ts}}" rel="stylesheet" type="text/css" />
 
-{{# manifest}}
-  <script defer src="js/libs.js?ts={{& ts}}"></script>
-  <script defer src="{{& shared}}"></script>
-  <script defer src="{{& main}}"></script>
-{{/manifest}}
-</body>
+    {{#isDebug}}
+    <link
+      href="css/debug.css?version={{& version_tag}}"
+      rel="stylesheet"
+      type="text/css"
+    />
+    {{/isDebug}}
+
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="images/favicon.svg?version={{& version_tag }}"
+    />
+
+    <script type="importmap">{{& manifest.importmap }}</script>
+
+    <script type="module">
+      globalThis.penpotVersion = "{{& version}}";
+      globalThis.penpotVersionTag = "{{& version_tag}}";
+      globalThis.penpotBuildDate = "{{& build_date}}";
+      globalThis.penpotWorkerURI = "{{& manifest.worker_main}}";
+    </script>
+
+    {{# manifest}}
+    <script src="{{& config}}"></script>
+    <script src="{{& polyfills}}"></script>
+    {{/manifest}}
+
+    <!--cookie-consent-->
+  </head>
+
+  <body>
+    <!-- Google Tag Manager (noscript) -->
+    <noscript>
+      <iframe
+        src="https://www.googletagmanager.com/ns.html?id=GTM-MQJ44V42"
+        height="0"
+        width="0"
+        style="display:none;visibility:hidden"
+      ></iframe>
+    </noscript>
+    <!-- End Google Tag Manager (noscript) -->
+
+    {{> ../public/images/sprites/symbol/icons.svg }}
+    {{> ../public/images/sprites/symbol/cursors.svg }}
+    {{> ../public/images/sprites/assets.svg }}
+
+    <div id="app"></div>
+    <section id="modal"></section>
+
+    {{# manifest}}
+    <script type="module" src="{{& libs}}"></script>
+    <script type="module">
+      import { init } from "{{& app_main}}";
+      import defaultTranslations from "{{& default_translations}}";
+
+      init({defaultTranslations});
+    </script>
+    {{/manifest}}
+  </body>
 </html>

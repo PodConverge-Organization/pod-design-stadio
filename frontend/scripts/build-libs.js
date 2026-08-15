@@ -1,31 +1,31 @@
 import * as esbuild from "esbuild";
-import {readFile} from "node:fs/promises";
-import path from "path";
+import { readFile } from "node:fs/promises";
+
+/**
+ * esbuild plugin to watch a directory recursively
+ */
+const watchExtraDirPlugin = {
+  name: 'watch-extra-dir',
+  setup(build) {
+    build.onLoad({ filter: /target\/index.js/, namespace: 'file' }, async (args) => {
+      return {
+        watchDirs: ["packages/ui/dist"],
+      };
+    });
+  }
+};
 
 const filter =
   /react-virtualized[/\\]dist[/\\]es[/\\]WindowScroller[/\\]utils[/\\]onScroll\.js$/;
 
 const fixReactVirtualized = {
   name: "esbuild-plugin-react-virtualized",
-  setup({onLoad}) {
-    onLoad({filter}, async ({path}) => {
+  setup({ onLoad }) {
+    onLoad({ filter }, async ({ path }) => {
       const code = await readFile(path, "utf8");
       const broken = `import { bpfrpt_proptype_WindowScroller } from "../WindowScroller.js";`;
-      return {contents: code.replace(broken, "")};
+      return { contents: code.replace(broken, "") };
     });
-  },
-};
-
-const redirectPluginsRuntime = {
-  name: "penpot-plugins-runtime-alias",
-  setup(build) {
-    build.onResolve({filter: /^@penpot\/plugins-runtime$/}, () => ({
-      // point at the TS source entry
-      path: path.resolve(
-        process.cwd(),
-        "vendor/penpot-plugins/libs/plugins-runtime/src/index.ts"
-      ),
-    }));
   },
 };
 
@@ -45,16 +45,12 @@ const rebuildNotify = {
 const config = {
   entryPoints: ["target/index.js"],
   bundle: true,
-  format: "iife",
+  format: "esm",
   banner: {
-    js: '"use strict";',
+    js: '"use strict";\nvar global = globalThis;',
   },
   outfile: "resources/public/js/libs.js",
-  loader: {
-    ".svg": "dataurl",
-    ".css": "text",
-  },
-  plugins: [fixReactVirtualized, redirectPluginsRuntime, rebuildNotify],
+  plugins: [fixReactVirtualized, rebuildNotify, watchExtraDirPlugin],
 };
 
 async function watch() {
@@ -65,6 +61,6 @@ async function watch() {
 if (process.argv.includes("--watch")) {
   await watch();
 } else {
-  const localConfig = {...config, minify: true};
+  const localConfig = { ...config, minify: true };
   await esbuild.build(localConfig);
 }

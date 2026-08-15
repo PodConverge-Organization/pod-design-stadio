@@ -234,7 +234,7 @@ Use variables from `frontend/src/app/main/ui/ds/spacing.scss`. These are predefi
 For fixed dimensions (e.g., modals' widths) defined by design and not layout-driven, use or define variables in `frontend/src/app/main/ui/ds/_sizes.scss`. To use them:
 
 ```scss
-@use "../_sizes.scss" as *;
+@use "ds/_sizes.scss" as *;
 ```
 Note: Since these values haven't been semantically defined yet, we’re temporarily using SASS variables instead of named CSS custom properties.
 
@@ -242,7 +242,7 @@ Note: Since these values haven't been semantically defined yet, we’re temporar
 Use border thickness variables from `frontend/src/app/main/ui/ds/_borders.scss`. To import:
 
 ```scss
-@use "../_borders.scss" as *;
+@use "ds/_borders.scss" as *;
 ```
 
 Avoid using sass variables defined on `frontend/resources/styles/common/refactor/spacing.scss` that are deprecated.
@@ -314,7 +314,7 @@ When applying typography in SCSS, use the proper mixin from the Design System.
 
 ✅ **DO: Use the DS mixin**
 ```scss
-@use "../ds/typography.scss" as t;
+@use "ds/typography.scss" as t;
 
 .class {
   @include t.use-typography("body-small");
@@ -677,7 +677,7 @@ The Storybook is available at the <code class="language-bash">/storybook</code> 
 
 #### Local development
 
-Use <code class="language-bash">yarn watch:storybook</code> to develop the Design System components with the help of Storybook.
+Use <code class="language-bash">pnpm run watch:storybook</code> to develop the Design System components with the help of Storybook.
 
 > **⚠️ WARNING**: Do stop any existing Shadow CLJS and asset compilation jobs (like the ones running at tabs <code class="language-bash">0</code> and <code class="language-bash">1</code> in the devenv tmux), because <code class="language-bash">watch:storybook</code> will spawn their own.
 

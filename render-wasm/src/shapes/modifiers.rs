@@ -1,47 +1,40 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-pub mod common;
+
 mod constraints;
 mod flex_layout;
+
+pub mod common;
 pub mod grid_layout;
 
+use crate::math::{self as math, bools, identitish, is_close_to, Bounds, Matrix, Point};
 use common::GetBounds;
 
-use crate::math::bools;
-use crate::math::{self as math, identitish, Bounds, Matrix, Point};
-
 use crate::shapes::{
-    auto_height, set_paragraphs_width, ConstraintH, ConstraintV, Frame, Group, GrowType, Layout,
-    Modifier, Shape, StructureEntry, TransformEntry, Type,
+    ConstraintH, ConstraintV, Frame, Group, GrowType, Layout, Modifier, Shape, TransformEntry,
+    TransformEntrySource, Type,
 };
-use crate::state::ShapesPool;
-use crate::state::State;
+use crate::state::{ShapesPoolRef, State};
 use crate::uuid::Uuid;
 
 #[allow(clippy::too_many_arguments)]
 fn propagate_children(
     shape: &Shape,
-    shapes: &ShapesPool,
+    shapes: ShapesPoolRef,
     parent_bounds_before: &Bounds,
     parent_bounds_after: &Bounds,
     transform: Matrix,
     bounds: &HashMap<Uuid, Bounds>,
-    structure: &HashMap<Uuid, Vec<StructureEntry>>,
-    scale_content: &HashMap<Uuid, f32>,
 ) -> VecDeque<Modifier> {
-    let children_ids = shape.modified_children_ids(structure.get(&shape.id), true);
-
-    if children_ids.is_empty() || identitish(&transform) {
+    if identitish(&transform) {
         return VecDeque::new();
     }
 
     let mut result = VecDeque::new();
 
-    for child_id in children_ids.iter() {
+    for child_id in shape.children_ids_iter(true) {
         let Some(child) = shapes.get(child_id) else {
             continue;
         };
-
-        let ignore_constraints = scale_content.contains_key(child_id);
 
         let child_bounds = bounds.find(child);
 
@@ -80,10 +73,10 @@ fn propagate_children(
             constraint_h,
             constraint_v,
             transform,
-            ignore_constraints,
+            child.ignore_constraints,
         );
 
-        result.push_back(Modifier::transform(*child_id, transform));
+        result.push_back(Modifier::transform_propagate(*child_id, transform));
     }
 
     result
@@ -91,15 +84,13 @@ fn propagate_children(
 
 fn calculate_group_bounds(
     shape: &Shape,
-    shapes: &ShapesPool,
+    shapes: ShapesPoolRef,
     bounds: &HashMap<Uuid, Bounds>,
-    structure: &HashMap<Uuid, Vec<StructureEntry>>,
 ) -> Option<Bounds> {
     let shape_bounds = bounds.find(shape);
     let mut result = Vec::<Point>::new();
 
-    let children_ids = shape.modified_children_ids(structure.get(&shape.id), true);
-    for child_id in children_ids.iter() {
+    for child_id in shape.children_ids_iter(true) {
         let Some(child) = shapes.get(child_id) else {
             continue;
         };
@@ -107,33 +98,29 @@ fn calculate_group_bounds(
         let child_bounds = bounds.find(child);
         result.append(&mut child_bounds.points());
     }
-
     shape_bounds.with_points(result)
 }
 
 fn calculate_bool_bounds(
     shape: &Shape,
-    shapes: &ShapesPool,
+    shapes: ShapesPoolRef,
     bounds: &HashMap<Uuid, Bounds>,
     modifiers: &HashMap<Uuid, Matrix>,
-    structure: &HashMap<Uuid, Vec<StructureEntry>>,
 ) -> Option<Bounds> {
     let shape_bounds = bounds.find(shape);
-    let children_ids = shape.modified_children_ids(structure.get(&shape.id), true);
+    let children_ids = shape.children_ids(true);
 
     let Type::Bool(bool_data) = &shape.shape_type else {
         return Some(shape_bounds);
     };
 
-    let path = bools::bool_from_shapes(
-        bool_data.bool_type,
-        &children_ids,
-        shapes,
-        modifiers,
-        structure,
-    );
+    let mut subtree = shapes.subtree(&shape.id);
+    subtree.set_modifiers(modifiers.clone());
 
-    Some(path.bounds())
+    let path = bools::bool_from_shapes(bool_data.bool_type, &children_ids, &subtree);
+    let result = path.bounds();
+
+    Some(result)
 }
 
 fn set_pixel_precision(transform: &mut Matrix, bounds: &mut Bounds) {
@@ -196,19 +183,57 @@ fn propagate_transform(
 
     let mut transform = entry.transform;
 
-    if let Type::Text(content) = &shape.shape_type {
-        if content.grow_type() == GrowType::AutoHeight {
-            let mut paragraphs = content.get_skia_paragraphs();
-            set_paragraphs_width(shape_bounds_after.width(), &mut paragraphs);
-            let height = auto_height(&mut paragraphs, shape_bounds_after.width());
-            let resize_transform = math::resize_matrix(
-                &shape_bounds_after,
-                &shape_bounds_after,
+    // Only check the text layout when the width/height changes
+    if !is_close_to(shape_bounds_before.width(), shape_bounds_after.width())
+        || !is_close_to(shape_bounds_before.height(), shape_bounds_after.height())
+    {
+        if let Type::Text(text_content) = &mut shape.shape_type.clone() {
+            let resized_selrect = math::Rect::from_xywh(
+                shape.selrect.left(),
+                shape.selrect.top(),
                 shape_bounds_after.width(),
-                height,
+                shape_bounds_after.height(),
             );
-            shape_bounds_after = shape_bounds_after.transform(&resize_transform);
-            transform.post_concat(&resize_transform);
+            match text_content.grow_type() {
+                GrowType::AutoHeight => {
+                    // For auto-height, always update layout when width changes
+                    // because the new width affects how text wraps
+                    let width_changed =
+                        !is_close_to(shape_bounds_before.width(), shape_bounds_after.width());
+                    if width_changed || text_content.needs_update_layout() {
+                        text_content.update_layout(resized_selrect);
+                    }
+                    let height = text_content.size.height;
+                    let resize_transform = math::resize_matrix(
+                        &shape_bounds_after,
+                        &shape_bounds_after,
+                        shape_bounds_after.width(),
+                        height,
+                    );
+                    shape_bounds_after = shape_bounds_after.transform(&resize_transform);
+                    transform.post_concat(&resize_transform);
+                }
+                GrowType::AutoWidth => {
+                    // For auto-width, always update layout when height changes
+                    // because the new height affects how text flows
+                    let height_changed =
+                        !is_close_to(shape_bounds_before.height(), shape_bounds_after.height());
+                    if height_changed || text_content.needs_update_layout() {
+                        text_content.update_layout(resized_selrect);
+                    }
+                    let width = text_content.width();
+                    let height = text_content.size.height;
+                    let resize_transform = math::resize_matrix(
+                        &shape_bounds_after,
+                        &shape_bounds_after,
+                        width,
+                        height,
+                    );
+                    shape_bounds_after = shape_bounds_after.transform(&resize_transform);
+                    transform.post_concat(&resize_transform);
+                }
+                GrowType::Fixed => {}
+            }
         }
     }
 
@@ -224,8 +249,6 @@ fn propagate_transform(
             &shape_bounds_after,
             transform,
             bounds,
-            &state.structure,
-            &state.scale_content,
         );
         entries.append(&mut children);
     }
@@ -236,13 +259,20 @@ fn propagate_transform(
     shape_modif.post_concat(&transform);
     modifiers.insert(shape.id, shape_modif);
 
-    if shape.has_layout() {
-        entries.push_back(Modifier::reflow(shape.id));
+    let is_resize = !math::is_move_only_matrix(&transform);
+    let is_propagate = entry.source == TransformEntrySource::Propagate;
+
+    // If this is a layout and we're only moving don't need to reflow
+    if shape.has_layout() && is_resize {
+        entries.push_back(Modifier::reflow(shape.id, false));
     }
 
     if let Some(parent) = shape.parent_id.and_then(|id| shapes.get(&id)) {
-        if parent.has_layout() || parent.is_group_like() {
-            entries.push_back(Modifier::reflow(parent.id));
+        // When the parent is either a group or a layout we only mark for reflow
+        // if the current transformation is not a move propagation.
+        // If it's a move propagation we don't need to reflow, the parent is already changed.
+        if (parent.has_layout() || parent.is_group_like()) && (is_resize || !is_propagate) {
+            entries.push_back(Modifier::reflow(parent.id, false));
         }
     }
 }
@@ -252,7 +282,7 @@ fn propagate_reflow(
     state: &State,
     entries: &mut VecDeque<Modifier>,
     bounds: &mut HashMap<Uuid, Bounds>,
-    layout_reflows: &mut Vec<Uuid>,
+    layout_reflows: &mut HashSet<Uuid>,
     reflown: &mut HashSet<Uuid>,
     modifiers: &HashMap<Uuid, Matrix>,
 ) {
@@ -261,66 +291,43 @@ fn propagate_reflow(
     };
 
     let shapes = &state.shapes;
-    let mut reflow_parent = false;
+
+    if reflown.contains(id) {
+        return;
+    }
 
     match &shape.shape_type {
         Type::Frame(Frame {
             layout: Some(_), ..
         }) => {
-            if !reflown.contains(id) {
-                let mut skip_reflow = false;
-                if shape.is_layout_horizontal_fill() || shape.is_layout_vertical_fill() {
-                    if let Some(parent_id) = shape.parent_id {
-                        if !reflown.contains(&parent_id) {
-                            // If this is a fill layout but the parent has not been reflown yet
-                            // we wait for the next iteration for reflow
-                            skip_reflow = true;
-                            reflow_parent = true;
-                        }
-                    }
-                }
-
-                if shape.is_layout_vertical_auto() || shape.is_layout_horizontal_auto() {
-                    reflow_parent = true;
-                }
-
-                if !skip_reflow {
-                    layout_reflows.push(*id);
-                }
-            }
+            layout_reflows.insert(*id);
         }
         Type::Group(Group { masked: true }) => {
-            let children_ids = shape.modified_children_ids(state.structure.get(&shape.id), true);
+            let children_ids = shape.children_ids(true);
             if let Some(child) = shapes.get(&children_ids[0]) {
                 let child_bounds = bounds.find(child);
                 bounds.insert(shape.id, child_bounds);
-                reflow_parent = true;
             }
+            reflown.insert(*id);
         }
         Type::Group(_) => {
-            if let Some(shape_bounds) =
-                calculate_group_bounds(shape, shapes, bounds, &state.structure)
-            {
+            if let Some(shape_bounds) = calculate_group_bounds(shape, shapes, bounds) {
                 bounds.insert(shape.id, shape_bounds);
-                reflow_parent = true;
             }
+            reflown.insert(*id);
         }
         Type::Bool(_) => {
-            if let Some(shape_bounds) =
-                calculate_bool_bounds(shape, shapes, bounds, modifiers, &state.structure)
-            {
+            if let Some(shape_bounds) = calculate_bool_bounds(shape, shapes, bounds, modifiers) {
                 bounds.insert(shape.id, shape_bounds);
-                reflow_parent = true;
             }
+            reflown.insert(*id);
         }
-        _ => {
-            // Other shapes don't have to be reflown
-        }
+        _ => {}
     }
 
     if let Some(parent) = shape.parent_id.and_then(|id| shapes.get(&id)) {
-        if reflow_parent && (parent.has_layout() || parent.is_group_like()) {
-            entries.push_back(Modifier::reflow(parent.id));
+        if parent.has_layout() || parent.is_group_like() {
+            entries.push_back(Modifier::reflow(parent.id, false));
         }
     }
 }
@@ -338,35 +345,17 @@ fn reflow_shape(
 
     let shapes = &state.shapes;
 
-    let shape = if let Some(scale_content) = state.scale_content.get(id) {
-        &shape.scale_content(*scale_content)
-    } else {
-        shape
-    };
-
     let Type::Frame(frame_data) = &shape.shape_type else {
         return;
     };
 
     if let Some(Layout::FlexLayout(layout_data, flex_data)) = &frame_data.layout {
-        let mut children = flex_layout::reflow_flex_layout(
-            shape,
-            layout_data,
-            flex_data,
-            shapes,
-            bounds,
-            &state.structure,
-        );
+        let mut children =
+            flex_layout::reflow_flex_layout(shape, layout_data, flex_data, shapes, bounds);
         entries.append(&mut children);
     } else if let Some(Layout::GridLayout(layout_data, grid_data)) = &frame_data.layout {
-        let mut children = grid_layout::reflow_grid_layout(
-            shape,
-            layout_data,
-            grid_data,
-            shapes,
-            bounds,
-            &state.structure,
-        );
+        let mut children =
+            grid_layout::reflow_grid_layout(shape, layout_data, grid_data, shapes, bounds);
         entries.append(&mut children);
     }
     reflown.insert(*id);
@@ -379,19 +368,21 @@ pub fn propagate_modifiers(
 ) -> Vec<TransformEntry> {
     let mut entries: VecDeque<_> = modifiers
         .iter()
-        .map(|entry| Modifier::Transform(entry.clone()))
+        .map(|entry| {
+            // If we receive a identity matrix we force a reflow
+            if math::identitish(&entry.transform) {
+                Modifier::Reflow(entry.id, false)
+            } else {
+                Modifier::Transform(*entry)
+            }
+        })
         .collect();
 
-    for id in state.structure.keys() {
-        if id != &Uuid::nil() {
-            entries.push_back(Modifier::Reflow(*id));
-        }
-    }
-
+    let shapes = &state.shapes;
     let mut modifiers = HashMap::<Uuid, Matrix>::new();
     let mut bounds = HashMap::<Uuid, Bounds>::new();
     let mut reflown = HashSet::<Uuid>::new();
-    let mut layout_reflows = Vec::<Uuid>::new();
+    let mut layout_reflows = HashSet::<Uuid>::new();
 
     // We first propagate the transforms to the children and then after
     // recalculate the layouts. The layout can create further transforms that
@@ -409,30 +400,48 @@ pub fn propagate_modifiers(
                     &mut bounds,
                     &mut modifiers,
                 ),
-                Modifier::Reflow(id) => propagate_reflow(
-                    &id,
-                    state,
-                    &mut entries,
-                    &mut bounds,
-                    &mut layout_reflows,
-                    &mut reflown,
-                    &modifiers,
-                ),
+                Modifier::Reflow(id, force_reflow) => {
+                    if force_reflow {
+                        reflown.remove(&id);
+                    }
+
+                    propagate_reflow(
+                        &id,
+                        state,
+                        &mut entries,
+                        &mut bounds,
+                        &mut layout_reflows,
+                        &mut reflown,
+                        &modifiers,
+                    )
+                }
             }
         }
 
-        for id in layout_reflows.iter() {
+        let mut layout_reflows_vec: Vec<Uuid> = layout_reflows.into_iter().collect();
+
+        // We sort the reflows so they are process first the ones that are more
+        // deep in the tree structure. This way we can be sure that the children layouts
+        // are already reflowed.
+        layout_reflows_vec.sort_unstable_by(|id_a, id_b| {
+            let da = shapes.get_depth(id_a);
+            let db = shapes.get_depth(id_b);
+            db.cmp(&da)
+        });
+
+        let mut bounds_temp = bounds.clone();
+        for id in layout_reflows_vec.iter() {
             if reflown.contains(id) {
                 continue;
             }
-            reflow_shape(id, state, &mut reflown, &mut entries, &mut bounds);
+            reflow_shape(id, state, &mut reflown, &mut entries, &mut bounds_temp);
         }
-        layout_reflows = Vec::new();
+        layout_reflows = HashSet::new();
     }
 
     modifiers
         .iter()
-        .map(|(key, val)| TransformEntry::new(*key, *val))
+        .map(|(key, val)| TransformEntry::from_input(*key, *val))
         .collect()
 }
 
@@ -442,6 +451,7 @@ mod tests {
 
     use crate::math::{Matrix, Point};
     use crate::shapes::*;
+    use crate::state::ShapesPool;
 
     #[test]
     fn test_propagate_shape() {
@@ -480,8 +490,6 @@ mod tests {
             &bounds_after,
             transform,
             &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
         );
 
         assert_eq!(result.len(), 1);
@@ -512,8 +520,7 @@ mod tests {
 
         let parent = shapes.get(&parent_id).unwrap();
 
-        let bounds =
-            calculate_group_bounds(parent, &shapes, &HashMap::new(), &HashMap::new()).unwrap();
+        let bounds = calculate_group_bounds(parent, &shapes, &HashMap::new()).unwrap();
 
         assert_eq!(bounds.width(), 3.0);
         assert_eq!(bounds.height(), 3.0);

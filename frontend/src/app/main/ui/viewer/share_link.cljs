@@ -20,10 +20,13 @@
    [app.main.router :as rt]
    [app.main.store :as st]
    [app.main.ui.components.select :refer [select]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.ds.buttons.button :refer [button*]]
+   [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
+   [app.main.ui.ds.foundations.assets.icon :as i]
+   [app.main.ui.icons :as deprecated-icon]
+   [app.util.clipboard :as clipboard]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
-   [app.util.webapi :as wapi]
    [potok.v2.core :as ptk]
    [rumext.v2 :as mf]))
 
@@ -133,7 +136,7 @@
 
         copy-link
         (fn [_]
-          (wapi/write-to-clipboard current-link)
+          (clipboard/to-clipboard current-link)
           (st/emit! (ntf/show {:level :info
                                :type :toast
                                :content (tr "common.share-link.link-copied-success")
@@ -156,11 +159,6 @@
         (fn [_]
           (swap! perms-visible* not))
 
-        on-inspect-change
-        (fn [value]
-          (reset! confirm* false)
-          (swap! options* assoc :who-inspect value))
-
         on-comment-change
         (fn [value]
           (reset! confirm* false)
@@ -171,10 +169,11 @@
       [:div {:class (stl/css :share-link-header)}
        [:h2 {:class (stl/css :share-link-title)}
         (tr "common.share-link.title")]
-       [:button {:class (stl/css :modal-close-button)
-                 :on-click on-close
-                 :title (tr "labels.close")}
-        i/close]]
+       [:> icon-button* {:variant "ghost"
+                         :class (stl/css :modal-close-button)
+                         :aria-label (tr "labels.close")
+                         :on-click on-close
+                         :icon i/close}]]
       [:div {:class (stl/css :modal-content)}
        [:div {:class (stl/css :share-link-section)}
         (when (and (not confirm?) (some? current-link))
@@ -185,10 +184,10 @@
                     :placeholder (tr "common.share-link.placeholder")
                     :read-only true}]
 
-           [:button {:class (stl/css :copy-button)
-                     :title (tr "viewer.header.share.copy-link")
-                     :on-click copy-link}
-            i/clipboard]])
+           [:> icon-button* {:variant "ghost"
+                             :aria-label (tr "viewer.header.share.copy-link")
+                             :on-click copy-link
+                             :icon i/clipboard}]])
 
         [:div {:class (stl/css :hint-wrapper)}
          (when (not ^boolean confirm?)
@@ -199,28 +198,22 @@
             [:div {:class (stl/css :description)}
              (tr "common.share-link.confirm-deletion-link-description")]
             [:div {:class (stl/css :actions)}
-             [:input  {:type "button"
-                       :class (stl/css :button-cancel)
-                       :on-click #(reset! confirm* false)
-                       :value (tr "labels.cancel")}]
-             [:input {:type "button"
-                      :class (stl/css :button-danger)
-                      :on-click delete-link
-                      :value (tr "common.share-link.destroy-link")}]]]
+             [:> button* {:variant "secondary"
+                          :on-click #(reset! confirm* false)}
+              (tr "labels.cancel")]
+             [:> button* {:variant "destructive"
+                          :on-click delete-link}
+              (tr "common.share-link.destroy-link")]]]
 
            (some? current-link)
-           [:input
-            {:type "button"
-             :class (stl/css :button-danger)
-             :on-click try-delete-link
-             :value (tr "common.share-link.destroy-link")}]
+           [:> button* {:variant "destructive"
+                        :on-click try-delete-link}
+            (tr "common.share-link.destroy-link")]
 
            :else
-           [:input
-            {:type "button"
-             :class (stl/css :button-active)
-             :on-click create-link
-             :value (tr "common.share-link.get-link")}])]]
+           [:> button* {:variant "primary"
+                        :on-click create-link}
+            (tr "common.share-link.get-link")])]]
 
 
        (when (not ^boolean confirm?)
@@ -229,7 +222,7 @@
                     :on-click toggle-perms-visibility}
            [:span {:class (stl/css-case :icon true
                                         :rotated perms-visible?)}
-            i/arrow]
+            deprecated-icon/arrow]
            (tr "common.share-link.manage-ops")]
 
           (when ^boolean perms-visible?
@@ -249,7 +242,7 @@
                              :class (stl/css-case :global/checked true)}
 
                      [:span  {:class (stl/css :checked)}
-                      i/status-tick]
+                      deprecated-icon/status-tick]
 
                      (:name current-page)]
 
@@ -267,7 +260,7 @@
                                :class (stl/css :select-all-label)}
                        [:span {:class (stl/css-case :global/checked all-selected?)}
                         (when all-selected?
-                          i/status-tick)]
+                          deprecated-icon/status-tick)]
                        (tr "common.share-link.view-all")
                        [:input {:type "checkbox"
                                 :id "view-all"
@@ -285,7 +278,7 @@
                         [:label {:for (dm/str "page-" id)}
                          [:span {:class (stl/css-case :global/checked (contains? selected id))}
                           (when (contains? selected id)
-                            i/status-tick)]
+                            deprecated-icon/status-tick)]
                          name
                          (when (= current-page-id id)
                            [:div {:class (stl/css :current-tag)} (dm/str  " " (tr "common.share-link.current-tag"))])
@@ -304,17 +297,4 @@
                  :default-value (dm/str (:who-comment options))
                  :options [{:value "team" :label (tr "common.share-link.team-members")}
                            {:value "all" :label (tr "common.share-link.all-users")}]
-                 :on-change on-comment-change}]]]
-             [:div {:class (stl/css :inspect-mode)}
-              [:div {:class (stl/css :subtitle)}
-               (tr "common.share-link.permissions-can-inspect")]
-              [:div {:class (stl/css :items)}
-               [:& select
-                {:class (stl/css :who-inspect-select)
-                 :default-value (dm/str (:who-inspect options))
-                 :options [{:value "team" :label (tr "common.share-link.team-members")}
-                           {:value "all" :label (tr "common.share-link.all-users")}]
-                 :on-change on-inspect-change}]]]])])]]]))
-
-
-
+                 :on-change on-comment-change}]]]])])]]]))

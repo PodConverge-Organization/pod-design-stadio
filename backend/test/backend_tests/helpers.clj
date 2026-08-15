@@ -30,6 +30,7 @@
    [app.rpc.commands.files :as files]
    [app.rpc.commands.files-create :as files.create]
    [app.rpc.commands.files-update :as files.update]
+   [app.rpc.commands.projects :as projects]
    [app.rpc.commands.teams :as teams]
    [app.rpc.helpers :as rph]
    [app.util.blob :as blob]
@@ -62,7 +63,8 @@
 (def default
   {:database-uri "postgresql://postgres/penpot_test"
    :redis-uri "redis://redis/1"
-   :auto-file-snapshot-every 1})
+   :auto-file-snapshot-every 1
+   :file-data-backend "db"})
 
 (def config
   (cf/read-config :prefix "penpot-test"
@@ -74,9 +76,6 @@
    :enable-smtp
    :enable-quotes
    :enable-rpc-climit
-   :enable-feature-fdata-pointer-map
-   :enable-feature-fdata-objets-map
-   :enable-feature-components-v2
    :enable-auto-file-snapshot
    :disable-file-validation])
 
@@ -99,21 +98,23 @@
                       :thumbnail-uri "test"
                       :path (-> "backend_tests/test_files/template.penpot" io/resource fs/path)}]
           system (-> (merge main/system-config main/worker-config)
-                     (assoc-in [:app.redis/redis :app.redis/uri] (:redis-uri config))
+                     (assoc-in [:app.redis/client :app.redis/uri] (:redis-uri config))
                      (assoc-in [::db/pool ::db/uri] (:database-uri config))
                      (assoc-in [::db/pool ::db/username] (:database-username config))
                      (assoc-in [::db/pool ::db/password] (:database-password config))
                      (assoc-in [:app.rpc/methods :app.setup/templates] templates)
+                     (assoc-in [:app.rpc/methods :app.setup/templates] templates)
+                     (update :app.rpc/methods
+                             (fn [state]
+                               (-> state
+                                   (assoc :app.setup/templates templates)
+                                   (assoc :app.loggers.mattermost/reporter nil)
+                                   (assoc :app.loggers.database/reporter nil))))
+
                      (dissoc :app.srepl/server
                              :app.http/server
-                             :app.http/router
-                             :app.auth.oidc.providers/google
-                             :app.auth.oidc.providers/gitlab
-                             :app.auth.oidc.providers/github
-                             :app.auth.oidc.providers/generic
+                             :app.http/route
                              :app.setup/templates
-                             :app.auth.oidc/routes
-                             :app.worker/monitor
                              :app.http.oauth/handler
                              :app.notifications/handler
                              :app.loggers.mattermost/reporter
@@ -185,23 +186,25 @@
                         :is-demo false}
                        params)]
      (db/run! system
-              (fn [{:keys [::db/conn]}]
+              (fn [{:keys [::db/conn] :as cfg}]
                 (->> params
-                     (cmd.auth/create-profile! conn)
-                     (cmd.auth/create-profile-rels! conn)))))))
+                     (cmd.auth/create-profile cfg)
+                     (cmd.auth/create-profile-rels conn)))))))
 
 (defn create-project*
   ([i params] (create-project* *system* i params))
   ([system i {:keys [profile-id team-id] :as params}]
-   (us/assert uuid? profile-id)
-   (us/assert uuid? team-id)
 
-   (db/run! system
-            (fn [{:keys [::db/conn]}]
-              (->> (merge {:id (mk-uuid "project" i)
-                           :name (str "project" i)}
-                          params)
-                   (#'teams/create-project conn))))))
+   (assert (uuid? profile-id))
+   (assert (uuid? team-id))
+   (let [timestamp (ct/now)]
+     (db/run! system
+              (fn [cfg]
+                (->> (merge {:id (mk-uuid "project" i)
+                             :name (str "project" i)}
+                            params
+                            {::rpc/request-at timestamp})
+                     (#'projects/create-project cfg)))))))
 
 (defn create-file*
   ([i params]
@@ -552,6 +555,44 @@
       (io/copy r sw)
       (.toString sw))))
 
+(defn parse-sse
+  [content]
+  (let [state
+        (reduce (fn [{:keys [events data event id] :as state} line]
+                  (cond
+                    ;; empty line → dispatch event if we have data
+                    (str/blank? line)
+                    (if (seq data)
+                      (-> state
+                          (update :events conj {:event (or event "message")
+                                                :data (-> (str/join "\n" data))})
+                          (assoc :data [] :event nil))
+                      state)
+
+                    ;; comment line (starts with :)
+                    (str/starts-with? line ":")
+                    state
+
+                    :else
+                    (let [[field raw-value] (str/split line #":" 2)
+                          value (some-> raw-value (str/replace #"^ " ""))]
+                      (case field
+                        "data"  (update state :data conj (or value ""))
+                        "event" (assoc state :event value)
+                        ;; ignore retry and unknown fields
+                        state))))
+                {:events [] :data [] :event nil}
+                (str/split content #"\r?\n"))
+
+        ;; handle unterminated last event (no trailing blank line)
+        state (if (seq (:data state))
+                (update state :events conj
+                        {:event (or (:event state) "message")
+                         :data (str/join "\n" (:data state))})
+                state)]
+
+    (:events state)))
+
 (defn consume-sse
   [callback]
   (let [{:keys [::yres/status ::yres/body ::yres/headers] :as response} (callback {})
@@ -561,12 +602,9 @@
     (try
       (px/exec! :virtual #(rcp/write-body-to-stream body nil output))
       (into []
-            (map (fn [event]
-                   (let [[item1 item2] (re-seq #"(.*): (.*)\n?" event)]
-
-                     [(keyword (nth item1 2))
-                      (tr/decode-str (nth item2 2))])))
-            (-> (slurp' input)
-                (str/split "\n\n")))
+            (map (fn [{:keys [event data]}]
+                   (d/vec2 (keyword event)
+                           (tr/decode-str data))))
+            (parse-sse (slurp' input)))
       (finally
         (.close input)))))

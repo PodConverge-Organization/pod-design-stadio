@@ -27,6 +27,7 @@
    [app.rpc.commands.profile :as profile]
    [app.rpc.commands.teams :as teams]
    [app.setup :as-alias setup]
+   [app.setup.clock :as clock]
    [app.srepl.main :as srepl]
    [app.storage :as-alias sto]
    [app.storage.tmp :as tmp]
@@ -48,12 +49,21 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn index-handler
-  [_cfg _request]
-  {::yres/status  200
-   ::yres/headers {"content-type" "text/html"}
-   ::yres/body    (-> (io/resource "app/templates/debug.tmpl")
-                      (tmpl/render {:version (:full cf/version)
-                                    :supported-features cfeat/supported-features}))})
+  [cfg request]
+  (let [profile-id (::session/profile-id request)
+        offset     (clock/get-offset profile-id)
+        profile    (profile/get-profile cfg profile-id)]
+    {::yres/status  200
+     ::yres/headers {"content-type" "text/html"}
+     ::yres/body    (-> (io/resource "app/templates/debug.tmpl")
+                        (tmpl/render {:version (:full cf/version)
+                                      :profile profile
+                                      :current-clock  ct/*clock*
+                                      :current-offset (if offset
+                                                        (ct/format-duration offset)
+                                                        "NO OFFSET")
+                                      :current-time  (ct/format-inst (ct/now) :http)
+                                      :supported-features cfeat/supported-features}))}))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; FILE CHANGES
@@ -222,13 +232,22 @@
             (-> (io/resource "app/templates/error-report.v3.tmpl")
                 (tmpl/render (-> content
                                  (assoc :id id)
+                                 (assoc :version 3)
+                                 (assoc :created-at (ct/format-inst created-at :rfc1123))))))
+
+          (render-template-v4 [{:keys [content id created-at]}]
+            (-> (io/resource "app/templates/error-report.v4.tmpl")
+                (tmpl/render (-> content
+                                 (assoc :id id)
+                                 (assoc :version 4)
                                  (assoc :created-at (ct/format-inst created-at :rfc1123))))))]
 
     (if-let [report (get-report request)]
       (let [result (case (:version report)
                      1 (render-template-v1 report)
                      2 (render-template-v2 report)
-                     3 (render-template-v3 report))]
+                     3 (render-template-v3 report)
+                     4 (render-template-v4 report))]
         {::yres/status 200
          ::yres/body result
          ::yres/headers {"content-type" "text/html; charset=utf-8"
@@ -236,20 +255,22 @@
       {::yres/status 404
        ::yres/body "not found"})))
 
-(def sql:error-reports
+(def ^:private sql:error-reports
   "SELECT id, created_at,
           content->>'~:hint' AS hint
      FROM server_error_report
+    WHERE version = ?
     ORDER BY created_at DESC
-    LIMIT 200")
+    LIMIT 300")
 
-(defn error-list-handler
-  [{:keys [::db/pool]} _request]
-  (let [items (->> (db/exec! pool [sql:error-reports])
-                   (map #(update % :created-at ct/format-inst :rfc1123)))]
+(defn- error-list-handler
+  [{:keys [::db/pool]} {:keys [params]}]
+  (let [version (or (some-> (get params :version) parse-long) 3)
+        items   (->> (db/exec! pool [sql:error-reports version])
+                     (map #(update % :created-at ct/format-inst :rfc1123)))]
     {::yres/status 200
      ::yres/body (-> (io/resource "app/templates/error-list.tmpl")
-                     (tmpl/render {:items items}))
+                     (tmpl/render {:items items :version version}))
      ::yres/headers {"content-type" "text/html; charset=utf-8"
                      "x-robots-tag" "noindex"}}))
 
@@ -390,34 +411,6 @@
                            ::yres/headers {"content-type" "text/plain"}
                            ::yres/body    (str/ffmt "PROFILE '%' ACTIVATED" (:email profile))}))))))
 
-
-(defn- reset-file-version
-  [cfg {:keys [params] :as request}]
-  (let [file-id (some-> params :file-id d/parse-uuid)
-        version (some-> params :version d/parse-integer)]
-
-    (when-not (contains? params :force)
-      (ex/raise :type :validation
-                :code :missing-force
-                :hint "missing force checkbox"))
-
-    (when (nil? file-id)
-      (ex/raise :type :validation
-                :code :invalid-file-id
-                :hint "provided invalid file id"))
-
-    (when (nil? version)
-      (ex/raise :type :validation
-                :code :invalid-version
-                :hint "provided invalid version"))
-
-    (db/tx-run! cfg srepl/process-file! file-id #(assoc % :version version))
-
-    {::yres/status  200
-     ::yres/headers {"content-type" "text/plain"}
-     ::yres/body    "OK"}))
-
-
 (defn- handle-team-features
   [cfg {:keys [params] :as request}]
   (let [team-id    (some-> params :team-id d/parse-uuid)
@@ -463,6 +456,25 @@
          ::yres/body    "OK"}))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; VIRTUAL CLOCK
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- set-virtual-clock
+  [_ {:keys [params] :as request}]
+  (let [offset     (some-> params :offset str/trim not-empty ct/duration)
+        profile-id (::session/profile-id request)
+        reset?     (contains? params :reset)]
+    (if (= "production" (cf/get :tenant))
+      {::yres/status 501
+       ::yres/body "OPERATION NOT ALLOWED"}
+      (do
+        (if (or reset? (zero? (inst-ms offset)))
+          (clock/assign-offset profile-id nil)
+          (clock/assign-offset profile-id offset))
+        {::yres/status 302
+         ::yres/headers {"location" "/dbg"}}))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; OTHER SMALL VIEWS/HANDLERS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -498,7 +510,7 @@
 
 (defn authorized?
   [pool {:keys [::session/profile-id]}]
-  (or (= "devenv" (cf/get :host))
+  (or (and (= "devenv" (cf/get :host)) profile-id)
       (let [profile (ex/ignoring (profile/get-profile pool profile-id))
             admins  (or (cf/get :admins) #{})]
         (contains? admins (:email profile)))))
@@ -548,10 +560,10 @@
     ["/error/:id" {:handler (partial error-handler cfg)}]
     ["/error" {:handler (partial error-list-handler cfg)}]
     ["/actions" {:middleware [[errors]]}
+     ["/set-virtual-clock"
+      {:handler (partial set-virtual-clock cfg)}]
      ["/resend-email-verification"
       {:handler (partial resend-email-notification cfg)}]
-     ["/reset-file-version"
-      {:handler (partial reset-file-version cfg)}]
      ["/handle-team-features"
       {:handler (partial handle-team-features cfg)}]
      ["/file-export" {:handler (partial export-handler cfg)}]

@@ -4,21 +4,25 @@
 //
 // Copyright (c) KALEIDOS INC
 
-@import "refactor/common-refactor.scss";
-@import "../ds/_sizes.scss";
+@use "ds/_sizes.scss" as *;
+@use "ds/_utils.scss" as *;
 
 .element-options {
   display: flex;
   flex-direction: column;
-  gap: $s-16;
+  gap: var(--sp-l);
   width: 100%;
-  height: calc(100vh - #{$s-128}); // TODO: Fix this hardcoded value
-  padding-top: $s-8;
+  max-height: calc(100vh - px2rem(128)); // TODO: Fix this hardcoded value
+  padding-top: var(--sp-s);
+  padding-inline: var(--sp-m);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
+  background-color: var(--low-emphasis-background);
 }
 
 .workspace-element-options {
-  height: calc(100vh - #{$sz-200}); // TODO: Fix this hardcoded value
+  max-height: calc(100vh - px2rem(180)); // TODO: Fix this hardcoded value
+  padding-inline: var(--sp-m);
+  background-color: var(--low-emphasis-background);
 }

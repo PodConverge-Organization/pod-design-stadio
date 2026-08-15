@@ -27,7 +27,7 @@
    [app.common.types.page :as ctp]
    [app.common.types.plugins :as ctpg]
    [app.common.types.shape :as cts]
-   [app.common.types.tokens-lib :as cto]
+   [app.common.types.tokens-lib :as ctob]
    [app.common.types.typography :as cty]
    [app.common.uuid :as uuid]
    [app.config :as cf]
@@ -41,8 +41,10 @@
    [datoteka.fs :as fs]
    [datoteka.io :as io])
   (:import
+   java.io.File
    java.io.InputStream
    java.io.OutputStreamWriter
+   java.lang.AutoCloseable
    java.util.zip.ZipEntry
    java.util.zip.ZipFile
    java.util.zip.ZipOutputStream))
@@ -103,25 +105,25 @@
   (sm/encoder ctp/schema:page sm/json-transformer))
 
 (def encode-shape
-  (sm/encoder ::cts/shape sm/json-transformer))
+  (sm/encoder cts/schema:shape sm/json-transformer))
 
 (def encode-media
-  (sm/encoder ::ctf/media sm/json-transformer))
+  (sm/encoder ctf/schema:media sm/json-transformer))
 
 (def encode-component
-  (sm/encoder ::ctc/component sm/json-transformer))
+  (sm/encoder ctc/schema:component sm/json-transformer))
 
 (def encode-color
   (sm/encoder ctcl/schema:library-color sm/json-transformer))
 
 (def encode-typography
-  (sm/encoder ::cty/typography sm/json-transformer))
+  (sm/encoder cty/schema:typography sm/json-transformer))
 
 (def encode-tokens-lib
-  (sm/encoder ::cto/tokens-lib sm/json-transformer))
+  (sm/encoder ctob/schema:tokens-lib sm/json-transformer))
 
 (def encode-plugin-data
-  (sm/encoder ::ctpg/plugin-data sm/json-transformer))
+  (sm/encoder ctpg/schema:plugin-data sm/json-transformer))
 
 (def encode-storage-object
   (sm/encoder schema:storage-object sm/json-transformer))
@@ -138,7 +140,7 @@
   (sm/decoder ctf/schema:media sm/json-transformer))
 
 (def decode-component
-  (sm/decoder ::ctc/component sm/json-transformer))
+  (sm/decoder ctc/schema:component sm/json-transformer))
 
 (def decode-color
   (sm/decoder ctcl/schema:library-color sm/json-transformer))
@@ -147,19 +149,19 @@
   (sm/decoder schema:file sm/json-transformer))
 
 (def decode-page
-  (sm/decoder ::ctp/page sm/json-transformer))
+  (sm/decoder ctp/schema:page sm/json-transformer))
 
 (def decode-shape
-  (sm/decoder ::cts/shape sm/json-transformer))
+  (sm/decoder cts/schema:shape sm/json-transformer))
 
 (def decode-typography
-  (sm/decoder ::cty/typography sm/json-transformer))
+  (sm/decoder cty/schema:typography sm/json-transformer))
 
 (def decode-tokens-lib
-  (sm/decoder cto/schema:tokens-lib sm/json-transformer))
+  (sm/decoder ctob/schema:tokens-lib sm/json-transformer))
 
 (def decode-plugin-data
-  (sm/decoder ::ctpg/plugin-data sm/json-transformer))
+  (sm/decoder ctpg/schema:plugin-data sm/json-transformer))
 
 (def decode-storage-object
   (sm/decoder schema:storage-object sm/json-transformer))
@@ -173,31 +175,31 @@
   (sm/check-fn schema:manifest))
 
 (def validate-file
-  (sm/check-fn ::ctf/file))
+  (sm/check-fn ctf/schema:file))
 
 (def validate-page
-  (sm/check-fn ::ctp/page))
+  (sm/check-fn ctp/schema:page))
 
 (def validate-shape
-  (sm/check-fn ::cts/shape))
+  (sm/check-fn cts/schema:shape))
 
 (def validate-media
-  (sm/check-fn ::ctf/media))
+  (sm/check-fn ctf/schema:media))
 
 (def validate-color
   (sm/check-fn ctcl/schema:library-color))
 
 (def validate-component
-  (sm/check-fn ::ctc/component))
+  (sm/check-fn ctc/schema:component))
 
 (def validate-typography
-  (sm/check-fn ::cty/typography))
+  (sm/check-fn cty/schema:typography))
 
 (def validate-tokens-lib
-  (sm/check-fn ::cto/tokens-lib))
+  (sm/check-fn ctob/schema:tokens-lib))
 
 (def validate-plugin-data
-  (sm/check-fn ::ctpg/plugin-data))
+  (sm/check-fn ctpg/schema:plugin-data))
 
 (def validate-storage-object
   (sm/check-fn schema:storage-object))
@@ -222,9 +224,12 @@
     (throw (IllegalArgumentException.
             "the `include-libraries` and `embed-assets` are mutally excluding options")))
 
-  (let [detach?  (and (not embed-assets) (not include-libraries))]
+  (let [detach? (and (not embed-assets) (not include-libraries))]
     (db/tx-run! cfg (fn [cfg]
-                      (cond-> (bfc/get-file cfg file-id {::sql/for-update true})
+                      (cond-> (bfc/get-file cfg file-id
+                                            {:realize? true
+                                             :include-deleted? true
+                                             :lock-for-update? true})
                         detach?
                         (-> (ctf/detach-external-references file-id)
                             (dissoc :libraries))
@@ -250,10 +255,12 @@
 
         (write-entry! output path params)
 
+        (events/tap :progress {:section :storage-object :id id})
+
         (with-open [input (sto/get-object-data storage sobject)]
-          (.putNextEntry output (ZipEntry. (str "objects/" id ext)))
+          (.putNextEntry ^ZipOutputStream output (ZipEntry. (str "objects/" id ext)))
           (io/copy input output :size (:size sobject))
-          (.closeEntry output))))))
+          (.closeEntry ^ZipOutputStream output))))))
 
 (defn- export-file
   [{:keys [::file-id ::output] :as cfg}]
@@ -274,6 +281,8 @@
 
         thumbnails   (bfc/get-file-object-thumbnails cfg file-id)]
 
+    (events/tap :progress {:section :file :id file-id})
+
     (vswap! bfc/*state* update :files assoc file-id
             {:id file-id
              :name (:name file)
@@ -281,14 +290,12 @@
 
     (let [file (cond-> (select-keys file bfc/file-attrs)
                  (:options data)
-                 (assoc :options (:options data))
+                 (assoc :options (:options data)))
 
-                 :always
-                 (dissoc :data))
-
-          file (cond-> file
-                 :always
-                 (encode-file))
+          file (-> file
+                   (dissoc :data)
+                   (dissoc :deleted-at)
+                   (encode-file))
 
           path (str "files/" file-id ".json")]
       (write-entry! output path file))
@@ -347,7 +354,8 @@
             typography (encode-typography object)]
         (write-entry! output path typography)))
 
-    (when tokens-lib
+    (when (and tokens-lib
+               (not (ctob/empty-lib? tokens-lib)))
       (let [path           (str "files/" file-id "/tokens.json")
             encoded-tokens (encode-tokens-lib tokens-lib)]
         (write-entry! output path encoded-tokens)))))
@@ -447,7 +455,7 @@
 (defn- read-manifest
   [^ZipFile input]
   (let [entry (get-zip-entry input "manifest.json")]
-    (with-open [reader (zip-entry-reader input entry)]
+    (with-open [^AutoCloseable reader (zip-entry-reader input entry)]
       (let [manifest (json/read reader :key-fn json/read-kebab-key)]
         (decode-manifest manifest)))))
 
@@ -537,12 +545,12 @@
 
 (defn- read-entry
   [^ZipFile input entry]
-  (with-open [reader (zip-entry-reader input entry)]
+  (with-open [^AutoCloseable reader (zip-entry-reader input entry)]
     (json/read reader :key-fn json/read-kebab-key)))
 
 (defn- read-plain-entry
   [^ZipFile input entry]
-  (with-open [reader (zip-entry-reader input entry)]
+  (with-open [^AutoCloseable reader (zip-entry-reader input entry)]
     (json/read reader)))
 
 (defn- read-file
@@ -710,7 +718,7 @@
      :plugin-data plugin-data}))
 
 (defn- import-file
-  [{:keys [::bfc/project-id] :as cfg} {file-id :id file-name :name}]
+  [{:keys [::db/conn ::bfc/project-id] :as cfg} {file-id :id file-name :name}]
   (let [file-id'   (bfc/lookup-index file-id)
         file       (read-file cfg file-id)
         media      (read-file-media cfg file-id)
@@ -723,26 +731,48 @@
            :version (:version file)
            ::l/sync? true)
 
-    (events/tap :progress {:section :file :name file-name})
+    (vswap! bfc/*state* update :index bfc/update-index media :id)
 
-    (when media
-      ;; Update index with media
-      (l/dbg :hint "update media index"
-             :file-id (str file-id')
-             :total (count media)
-             ::l/sync? true)
+    (events/tap :progress {:section :media :file-id file-id})
 
-      (vswap! bfc/*state* update :index bfc/update-index (map :id media))
-      (vswap! bfc/*state* update :media into media))
+    (doseq [item media]
+      (let [params (-> item
+                       (update :id bfc/lookup-index)
+                       (assoc :file-id file-id')
+                       (d/update-when :media-id bfc/lookup-index)
+                       (d/update-when :thumbnail-id bfc/lookup-index))]
 
-    (when thumbnails
-      (l/dbg :hint "update thumbnails index"
-             :file-id (str file-id')
-             :total (count thumbnails)
-             ::l/sync? true)
+        (l/dbg :hint "inserting media object"
+               :file-id (str file-id')
+               :id (str (:id params))
+               :media-id (str (:media-id params))
+               :thumbnail-id (str (:thumbnail-id params))
+               :old-id (str (:id item))
+               ::l/sync? true)
 
-      (vswap! bfc/*state* update :index bfc/update-index (map :media-id thumbnails))
-      (vswap! bfc/*state* update :thumbnails into thumbnails))
+        (db/insert! conn :file-media-object params
+                    ::db/on-conflict-do-nothing? (::bfc/overwrite cfg))))
+
+    (events/tap :progress {:section :thumbnails :file-id file-id})
+
+    (doseq [item thumbnails]
+      (let [media-id  (bfc/lookup-index (:media-id item))
+            object-id (-> (assoc item :file-id file-id')
+                          (cth/fmt-object-id))
+            params    {:file-id file-id'
+                       :object-id object-id
+                       :tag (:tag item)
+                       :media-id media-id}]
+
+        (l/dbg :hint "inserting object thumbnail"
+               :file-id (str file-id')
+               :media-id (str media-id)
+               ::l/sync? true)
+
+        (db/insert! conn :file-tagged-object-thumbnail params
+                    ::db/on-conflict-do-nothing? true)))
+
+    (events/tap :progress {:section :file :file-id file-id})
 
     (let [data (-> (read-file-data cfg file-id)
                    (d/without-nils)
@@ -791,95 +821,48 @@
         entries (keep (match-storage-entry-fn) entries)]
 
     (doseq [{:keys [id entry]} entries]
-      (let [object (->> (read-entry input entry)
+      (let [object  (-> (read-entry input entry)
                         (decode-storage-object)
-                        (validate-storage-object))]
+                        (update :bucket d/nilv sto/default-bucket)
+                        (validate-storage-object))
 
-        (when (not= id (:id object))
+            ext     (cmedia/mtype->extension (:content-type object))
+            path    (str "objects/" id ext)
+            content (->> path
+                         (get-zip-entry input)
+                         (zip-entry-storage-content input))]
+
+        (when (not= (:size object) (sto/get-size content))
           (ex/raise :type :validation
                     :code :inconsistent-penpot-file
-                    :hint "the penpot file seems corrupt, found unexpected uuid (storage-object-id)"
-                    :expected-id (str id)
-                    :found-id (str (:id object))))
+                    :hint "found corrupted storage object: size does not match"
+                    :path path
+                    :expected-size (:size object)
+                    :found-size (sto/get-size content)))
 
-        (let [ext     (cmedia/mtype->extension (:content-type object))
-              path    (str "objects/" id ext)
-              content (->> path
-                           (get-zip-entry input)
-                           (zip-entry-storage-content input))]
-
-          (when (not= (:size object) (sto/get-size content))
+        (when-let [hash (get object :hash)]
+          (when (not= hash (sto/get-hash content))
             (ex/raise :type :validation
                       :code :inconsistent-penpot-file
-                      :hint "found corrupted storage object: size does not match"
+                      :hint "found corrupted storage object: hash does not match"
                       :path path
-                      :expected-size (:size object)
-                      :found-size (sto/get-size content)))
+                      :expected-hash (:hash object)
+                      :found-hash (sto/get-hash content))))
 
-          (when-let [hash (get object :hash)]
-            (when (not= hash (sto/get-hash content))
-              (ex/raise :type :validation
-                        :code :inconsistent-penpot-file
-                        :hint "found corrupted storage object: hash does not match"
-                        :path path
-                        :expected-hash (:hash object)
-                        :found-hash (sto/get-hash content))))
+        (let [params  (-> object
+                          (dissoc :id :size)
+                          (assoc ::sto/content content)
+                          (assoc ::sto/deduplicate? true)
+                          (assoc ::sto/touched-at timestamp))
+              sobject (sto/put-object! storage params)]
 
-          (let [params  (-> object
-                            (dissoc :id :size)
-                            (assoc ::sto/content content)
-                            (assoc ::sto/deduplicate? true)
-                            (assoc ::sto/touched-at timestamp))
-                sobject (sto/put-object! storage params)]
+          (l/dbg :hint "persisted storage object"
+                 :id (str (:id sobject))
+                 :prev-id (str id)
+                 :bucket (:bucket params)
+                 ::l/sync? true)
 
-            (l/dbg :hint "persisted storage object"
-                   :id (str (:id sobject))
-                   :prev-id (str id)
-                   :bucket (:bucket params)
-                   ::l/sync? true)
-
-            (vswap! bfc/*state* update :index assoc id (:id sobject))))))))
-
-(defn- import-file-media
-  [{:keys [::db/conn] :as cfg}]
-  (events/tap :progress {:section :media})
-
-  (doseq [item (:media @bfc/*state*)]
-    (let [params (-> item
-                     (update :id bfc/lookup-index)
-                     (update :file-id bfc/lookup-index)
-                     (d/update-when :media-id bfc/lookup-index)
-                     (d/update-when :thumbnail-id bfc/lookup-index))]
-
-      (l/dbg :hint "inserting file media object"
-             :old-id (str (:id item))
-             :id (str (:id params))
-             :file-id (str (:file-id params))
-             ::l/sync? true)
-
-      (db/insert! conn :file-media-object params
-                  ::db/on-conflict-do-nothing? (::bfc/overwrite cfg)))))
-
-(defn- import-file-thumbnails
-  [{:keys [::db/conn] :as cfg}]
-  (events/tap :progress {:section :thumbnails})
-  (doseq [item (:thumbnails @bfc/*state*)]
-    (let [file-id   (bfc/lookup-index (:file-id item))
-          media-id  (bfc/lookup-index (:media-id item))
-          object-id (-> (assoc item :file-id file-id)
-                        (cth/fmt-object-id))
-          params    {:file-id file-id
-                     :object-id object-id
-                     :tag (:tag item)
-                     :media-id media-id}]
-
-      (l/dbg :hint "inserting file object thumbnail"
-             :file-id (str file-id)
-             :media-id (str media-id)
-             ::l/sync? true)
-
-      (db/insert! conn :file-tagged-object-thumbnail params
-                  {::db/on-conflict-do-nothing? true}))))
+          (vswap! bfc/*state* update :index assoc id (:id sobject)))))))
 
 (defn- import-files*
   [{:keys [::manifest] :as cfg}]
@@ -887,22 +870,17 @@
 
   (vswap! bfc/*state* update :index bfc/update-index (:files manifest) :id)
 
+  (import-storage-objects cfg)
+
   (let [files  (get manifest :files)
-        result (reduce (fn [result {:keys [id] :as file}]
+        result (reduce (fn [result file]
                          (let [name' (get file :name)
-                               name' (if (map? name)
-                                       (get name id)
-                                       name')
                                file (assoc file :name name')]
                            (conj result (import-file cfg file))))
                        []
                        files)]
 
     (import-file-relations cfg)
-    (import-storage-objects cfg)
-    (import-file-media cfg)
-    (import-file-thumbnails cfg)
-
     (bfm/apply-pending-migrations! cfg)
 
     result))
@@ -927,9 +905,8 @@
     (binding [bfc/*options* cfg
               bfc/*reference-file* ref-file]
 
-      (import-file cfg file)
       (import-storage-objects cfg)
-      (import-file-media cfg)
+      (import-file cfg file)
 
       (bfc/invalidate-thumbnails cfg file-id)
       (bfm/apply-pending-migrations! cfg)
@@ -1006,8 +983,8 @@
     (try
       (l/info :hint "start exportation" :export-id (str id))
       (binding [bfc/*state* (volatile! (bfc/initial-state))]
-        (with-open [output (io/output-stream output)]
-          (with-open [output (ZipOutputStream. output)]
+        (with-open [^AutoCloseable output (io/output-stream output)]
+          (with-open [^AutoCloseable output (ZipOutputStream. output)]
             (let [cfg (assoc cfg ::output output)]
               (export-files cfg)
               (export-storage-objects cfg)))))
@@ -1051,7 +1028,7 @@
 
     (l/info :hint "import: started" :id (str id))
     (try
-      (with-open [input (ZipFile. (fs/file input))]
+      (with-open [input (ZipFile. ^File (fs/file input))]
         (import-files (assoc cfg ::bfc/input input)))
 
       (catch Throwable cause
@@ -1066,6 +1043,6 @@
 
 (defn get-manifest
   [path]
-  (with-open [input (ZipFile. (fs/file path))]
+  (with-open [^AutoCloseable input (ZipFile. ^File (fs/file path))]
     (-> (read-manifest input)
         (validate-manifest))))

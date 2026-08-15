@@ -9,7 +9,6 @@
    [app.common.exceptions :as ex]
    [app.common.logging :as l]
    [app.common.schema :as sm]
-   [app.common.time :as ct]
    [app.common.transit :as t]
    [app.common.uuid :as uuid]
    [app.config :as cf]
@@ -53,13 +52,12 @@
 
 (defn- send!
   [{:keys [::uri] :as cfg} events]
-  (let [token   (tokens/generate (::setup/props cfg)
+  (let [token   (tokens/generate cfg
                                  {:iss "authentication"
-                                  :iat (ct/now)
                                   :uid uuid/zero})
         body    (t/encode {:events events})
         headers {"content-type" "application/transit+json"
-                 "origin" (cf/get :public-uri)
+                 "origin" (str (cf/get :public-uri))
                  "cookie" (u/map->query-string {:auth-token token})}
         params  {:uri uri
                  :timeout 12000

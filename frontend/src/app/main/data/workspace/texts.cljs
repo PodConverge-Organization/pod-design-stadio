@@ -11,12 +11,12 @@
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.files.helpers :as cfh]
-   [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [app.common.math :as mth]
    [app.common.types.fills :as types.fills]
    [app.common.types.modifiers :as ctm]
+   [app.common.types.shape.layout :as ctl]
    [app.common.types.text :as txt]
    [app.common.uuid :as uuid]
    [app.main.data.event :as ev]
@@ -29,10 +29,10 @@
    [app.main.data.workspace.text-defaults :as text-defaults]
    [app.main.data.workspace.transforms :as dwt]
    [app.main.data.workspace.undo :as dwu]
+   [app.main.data.workspace.wasm-text :as dwwt]
    [app.main.features :as features]
    [app.main.fonts :as fonts]
    [app.main.router :as rt]
-   [app.render-wasm.api :as wasm.api]
    [app.util.text-editor :as ted]
    [app.util.text.content.styles :as styles]
    [app.util.timers :as ts]
@@ -47,49 +47,21 @@
 (def ^function create-editor editor.v2/create)
 (def ^function set-editor-root! editor.v2/setRoot)
 (def ^function get-editor-root editor.v2/getRoot)
+(def ^function is-empty? editor.v2/isEmpty)
 (def ^function dispose! editor.v2/dispose)
 
 (declare v2-update-text-shape-content)
 (declare v2-update-text-editor-styles)
 
-(defn resize-wasm-text-modifiers
-  ([shape]
-   (resize-wasm-text-modifiers shape (:content shape)))
+;; -- Content helpers
 
-  ([{:keys [id points selrect] :as shape} content]
-   (wasm.api/use-shape id)
-   (wasm.api/set-shape-text id content)
-   (let [dimension (wasm.api/text-dimensions)
-         resize-v
-         (gpt/point
-          (/ (:width dimension) (-> selrect :width))
-          (/ (:height dimension) (-> selrect :height)))
-
-         origin (first points)]
-     {id
-      {:modifiers
-       (ctm/resize-modifiers
-        resize-v
-        origin
-        (:transform shape (gmt/matrix))
-        (:transform-inverse shape (gmt/matrix)))}})))
-
-(defn resize-wasm-text
-  [id]
-  (ptk/reify ::resize-wasm-text
-    ptk/WatchEvent
-    (watch [_ state _]
-      (let [objects (dsh/lookup-page-objects state)
-            shape   (get objects id)]
-        (rx/of (dwm/apply-wasm-modifiers (resize-wasm-text-modifiers shape)))))))
-
-(defn resize-wasm-text-all
-  [ids]
-  (ptk/reify ::resize-wasm-text-all
-    ptk/WatchEvent
-    (watch [_ _ _]
-      (->> (rx/from ids)
-           (rx/map resize-wasm-text)))))
+(defn- v2-content-has-text?
+  [content]
+  (boolean
+   (when content
+     (some (fn [node]
+             (not (str/blank? (:text node ""))))
+           (txt/node-seq txt/is-text-node? content)))))
 
 ;; -- Editor
 
@@ -163,7 +135,7 @@
                      {:undo-group (when new-shape? id)})
 
                     (dwm/apply-wasm-modifiers
-                     (resize-wasm-text-modifiers shape content)
+                     (dwwt/resize-wasm-text-modifiers shape content)
                      {:undo-group (when new-shape? id)})))))
 
               (let [content (d/merge (ted/export-content content)
@@ -423,8 +395,9 @@
                 (txt/update-text-content shape txt/is-root-node? d/txt-merge attrs)
                 (assoc shape :content (d/txt-merge {:type "root"} attrs))))
 
-            shape-ids (cond (cfh/text-shape? shape)  [id]
-                            (cfh/group-shape? shape) (cfh/get-children-ids objects id))]
+            shape-ids
+            (cond (cfh/text-shape? shape)  [id]
+                  (cfh/group-shape? shape) (cfh/get-children-ids objects id))]
 
         (rx/of (dwsh/update-shapes shape-ids update-fn))))))
 
@@ -490,11 +463,7 @@
       ;; We don't have the fills attribute. It's an old text without color
       ;; so need to be black
       (and (nil? (:fills node)) (empty? color-attrs))
-      (assoc :fills (txt/get-default-text-fills))
-
-      ;; Remove duplicates from the fills
-      :always
-      (update :fills types.fills/update distinct))))
+      (assoc :fills (txt/get-default-text-fills)))))
 
 (defn migrate-content
   [content]
@@ -542,7 +511,7 @@
        (when (features/active-feature? state "text-editor/v2")
          (let [instance (:workspace-editor state)
                styles   (some-> (editor.v2/getCurrentStyle instance)
-                                (styles/get-styles-from-style-declaration)
+                                (styles/get-styles-from-style-declaration :removed-mixed true)
                                 ((comp update-node-fn migrate-node))
                                 (styles/attrs->styles))]
            (editor.v2/applyStylesToSelection instance styles)))))))
@@ -585,12 +554,17 @@
 
                         shape
                         (cond-> shape
-                          (and (not-changed? shape-width new-width) (= grow-type :auto-width))
+                          (and (or (not (ctl/any-layout-immediate-child? objects shape))
+                                   (not (ctl/fill-width? shape)))
+                               (not-changed? shape-width new-width)
+                               (= grow-type :auto-width))
                           (gsh/transform-shape (ctm/change-dimensions-modifiers shape :width new-width {:ignore-lock? true})))
 
                         shape
                         (cond-> shape
-                          (and (not-changed? shape-height new-height)
+                          (and (or (not (ctl/any-layout-immediate-child? objects shape))
+                                   (not (ctl/fill-height? shape)))
+                               (not-changed? shape-height new-height)
                                (or (= grow-type :auto-height) (= grow-type :auto-width)))
                           (gsh/transform-shape (ctm/change-dimensions-modifiers shape :height new-height {:ignore-lock? true})))]
 
@@ -598,7 +572,8 @@
 
           (let [ids (into #{} (filter changed-text?) (keys props))]
             (rx/of (dwu/start-undo-transaction undo-id)
-                   (dwsh/update-shapes ids update-fn {:reg-objects? true
+                   (dwsh/update-shapes ids update-fn {:with-objects? true
+                                                      :reg-objects? true
                                                       :stack-undo? true
                                                       :ignore-touched true})
                    (ptk/data-event :layout/update {:ids ids})
@@ -803,17 +778,16 @@
              (rx/of (v2-update-text-editor-styles id attrs)))
 
            (when (features/active-feature? state "render-wasm/v1")
-             ;; This delay is to give time for the font to be correctly rendered
-             ;; in wasm.
-             (cond->> (rx/of (resize-wasm-text id))
-               (contains? attrs :font-id)
-               (rx/delay 200)))))))
+             (rx/of (dwwt/resize-wasm-text-debounce id)))))))
 
     ptk/EffectEvent
     (effect [_ state _]
       (when (features/active-feature? state "text-editor/v2")
         (let [instance (:workspace-editor state)
-              styles (styles/attrs->styles attrs)]
+              attrs-to-override (some-> (editor.v2/getCurrentStyle instance)
+                                        (styles/get-styles-from-style-declaration))
+              overriden-attrs (merge attrs-to-override attrs)
+              styles  (styles/attrs->styles overriden-attrs)]
           (editor.v2/applyStylesToSelection instance styles))))))
 
 (defn update-all-attrs
@@ -929,37 +903,64 @@
       (update-in state [:workspace-text-modifier shape-id] {:position-data position-data}))))
 
 (defn v2-update-text-shape-content
-  [id content & {:keys [update-name? name finalize?]
-                 :or {update-name? false name nil finalize? false}}]
+  [id content & {:keys [update-name? name finalize? save-undo?]
+                 :or {update-name? false name nil finalize? false save-undo? true}}]
   (ptk/reify ::v2-update-text-shape-content
     ptk/WatchEvent
     (watch [_ state _]
       (if (features/active-feature? state "render-wasm/v1")
         (let [objects      (dsh/lookup-page-objects state)
               shape        (get objects id)
-              new-shape?   (nil? (:content shape))]
-          (rx/of
-           (dwsh/update-shapes
-            [id]
-            (fn [shape]
-              (let [new-shape (-> shape
-                                  (assoc :content content)
-                                  (cond-> (and update-name? (some? name))
-                                    (assoc :name name)))]
-                new-shape))
-            {:undo-group (when new-shape? id)})
+              new-shape?   (nil? (:content shape))
+              prev-content (:content shape)
+              has-prev-content? (not (nil? (:prev-content shape)))
+              has-content? (when-not new-shape?
+                             (v2-content-has-text? content))
+              did-has-content? (when-not new-shape?
+                                 (v2-content-has-text? prev-content))]
 
-           (if (and (not= :fixed (:grow-type shape)) finalize?)
-             (dwm/apply-wasm-modifiers
-              (resize-wasm-text-modifiers shape content)
-              {:undo-group (when new-shape? id)})
+          (rx/concat
+           (rx/of
+            (dwsh/update-shapes
+             [id]
+             (fn [shape]
+               (let [new-shape (-> shape
+                                   (assoc :content content)
+                                   (cond-> (and has-content?
+                                                has-prev-content?)
+                                     (dissoc :prev-content))
+                                   (cond-> (and did-has-content?
+                                                (not has-content?))
+                                     (assoc :prev-content prev-content))
+                                   (cond-> (and update-name? (some? name))
+                                     (assoc :name name)))]
+                 new-shape))
+             {:save-undo? save-undo? :undo-group (when new-shape? id)})
 
-             (dwm/set-wasm-modifiers
-              (resize-wasm-text-modifiers shape content)
-              {:undo-group (when new-shape? id)}))
+            (if (and (not= :fixed (:grow-type shape)) finalize?)
+              (dwm/apply-wasm-modifiers
+               (dwwt/resize-wasm-text-modifiers shape content)
+               {:undo-group (when new-shape? id)})
+
+              (dwm/set-wasm-modifiers
+               (dwwt/resize-wasm-text-modifiers shape content)
+               {:undo-group (when new-shape? id)})))
 
            (when finalize?
-             (dwt/finish-transform))))
+             (rx/concat
+              (when (and (not has-content?) (some? id))
+                (rx/of
+                 (when has-prev-content?
+                   (dwsh/update-shapes
+                    [id]
+                    (fn [shape]
+                      (let [new-shape (-> shape
+                                          (assoc :content (:prev-content shape)))]
+                        new-shape))
+                    {:save-undo? false}))
+                 (dws/deselect-shape id)
+                 (dwsh/delete-shapes #{id})))
+              (rx/of (dwt/finish-transform))))))
 
         (let [objects      (dsh/lookup-page-objects state)
               shape        (get objects id)

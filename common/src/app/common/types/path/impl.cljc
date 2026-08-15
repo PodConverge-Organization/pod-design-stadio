@@ -12,12 +12,13 @@
   (:require
    #?(:clj [app.common.fressian :as fres])
    #?(:clj [clojure.data.json :as json])
-   #?(:cljs [app.common.weak-map :as weak-map])
+   #?(:cljs [app.common.weak :as weak])
    [app.common.buffer :as buf]
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.schema :as sm]
    [app.common.schema.generators :as sg]
+   [app.common.schema.openapi :as oapi]
    [app.common.svg.path :as svg.path]
    [app.common.transit :as t]
    [app.common.types.path :as-alias path]
@@ -378,7 +379,7 @@
      (-transform [this m]
        (let [buffer (buf/clone buffer)]
          (impl-transform buffer m size)
-         (PathData. size buffer (weak-map/create) nil)))
+         (PathData. size buffer (weak/weak-value-map) nil)))
 
      (-walk [_ f initial]
        (impl-walk buffer f initial size))
@@ -497,10 +498,10 @@
     [:map
      [:x schema:safe-number]
      [:y schema:safe-number]
-     [:c1x schema:safe-number]
-     [:c1y schema:safe-number]
-     [:c2x schema:safe-number]
-     [:c2y schema:safe-number]]]])
+     [:c1x {:optional true} schema:safe-number]
+     [:c1y {:optional true} schema:safe-number]
+     [:c2x {:optional true} schema:safe-number]
+     [:c2y {:optional true} schema:safe-number]]]])
 
 (def ^:private schema:segment
   [:multi {:title "PathSegment"
@@ -537,7 +538,8 @@
                            (sg/fmap from-plain))]
         {:pred path-data?
          :type-properties
-         {:gen/gen generator
+         {::oapi/type "string"
+          :gen/gen generator
           :encode/json identity
           :decode/json (fn [s]
                          (cond
@@ -562,6 +564,9 @@
 
 (def check-content
   (sm/check-fn schema:content))
+
+(def decode-segments
+  (sm/lazy-decoder schema:segments sm/json-transformer))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; CONSTRUCTORS & PREDICATES
@@ -598,14 +603,14 @@
              count (long (/ size SEGMENT-U8-SIZE))]
          (PathData. count
                     (js/DataView. buffer)
-                    (weak-map/create)
+                    (weak/weak-value-map)
                     nil))
 
        (instance? js/DataView buffer)
        (let [buffer' (.-buffer ^js/DataView buffer)
              size    (.-byteLength ^js/ArrayBuffer buffer')
              count   (long (/ size SEGMENT-U8-SIZE))]
-         (PathData. count buffer (weak-map/create) nil))
+         (PathData. count buffer (weak/weak-value-map) nil))
 
        (instance? js/Uint8Array buffer)
        (from-bytes (.-buffer buffer))

@@ -36,7 +36,12 @@
 
 (defn- hide-popover
   [node]
-  (.hidePopover ^js node))
+  (when (and (some? node)
+             (fn? (.-hidePopover node)))
+    (dom/unset-css-property! node "block-size")
+    (dom/unset-css-property! node "inset-block-start")
+    (dom/unset-css-property! node "inset-inline-start")
+    (.hidePopover ^js node)))
 
 (defn- calculate-placement-bounding-rect
   "Given a placement, calcultates the bounding rect for it taking in
@@ -154,17 +159,11 @@
   the dom with the result."
   [tooltip placement origin-brect offset]
   (show-popover tooltip)
-  (let [saved-height (dom/get-data tooltip "height")
-        saved-width (dom/get-data tooltip "width")
-        tooltip-brect (dom/get-bounding-rect tooltip)
-        tooltip-brect (assoc tooltip-brect :height (or saved-height (:height tooltip-brect)) :width (or saved-width (:width tooltip-brect)))
+  (let [tooltip-brect (dom/get-bounding-rect tooltip)
+        tooltip-brect (assoc tooltip-brect :height (:height tooltip-brect) :width (:width tooltip-brect))
         window-size   (dom/get-window-size)]
     (when-let [[placement placement-rect] (find-matching-placement placement tooltip-brect origin-brect window-size offset)]
-      (let [height (if (or (= placement "right") (= placement "left"))
-                     (- (:height placement-rect) arrow-height)
-                     (:height placement-rect))]
-        (dom/set-data! tooltip "height" (:height tooltip-brect))
-        (dom/set-data! tooltip "width" (:width tooltip-brect))
+      (let [height (:height placement-rect)]
         (dom/set-css-property! tooltip "block-size" (dm/str height "px"))
         (dom/set-css-property! tooltip "inset-block-start" (dm/str (:top placement-rect) "px"))
         (dom/set-css-property! tooltip "inset-inline-start" (dm/str (:left placement-rect) "px")))
@@ -172,11 +171,11 @@
 
 (def ^:private schema:tooltip
   [:map
-   [:class {:optional true} :string]
+   [:class {:optional true} [:maybe :string]]
    [:id {:optional true} :string]
    [:offset {:optional true} :int]
    [:delay {:optional true} :int]
-   [:content [:or fn? :string [:fn mf/element?]]]
+   [:content [:or fn? :string map?]]
    [:placement {:optional true}
     [:maybe [:enum "top" "bottom" "left" "right" "top-right" "bottom-right" "bottom-left" "top-left"]]]])
 
@@ -185,6 +184,7 @@
   [{:keys [class id children content placement offset delay] :rest props}]
   (let [internal-id
         (mf/use-id)
+        trigger-ref (mf/use-ref nil)
 
         id
         (d/nilv id internal-id)
@@ -205,19 +205,23 @@
         (mf/use-fn
          (mf/deps id placement offset)
          (fn [event]
-           (clear-schedule schedule-ref)
-           (when-let [tooltip (dom/get-element id)]
-             (let [origin-brect
-                   (->> (dom/get-target event)
-                        (dom/get-bounding-rect))
 
-                   update-position
-                   (fn []
-                     (let [new-placement (update-tooltip-position tooltip placement origin-brect offset)]
-                       (when (not= new-placement placement)
-                         (reset! placement* new-placement))))]
+           (let [current (dom/get-current-target event)
+                 related (dom/get-related-target event)
+                 is-node? (fn [node] (and node (.-nodeType node)))]
+             (when-not (and related (is-node? related) (.contains current related))
+               (clear-schedule schedule-ref)
+               (when-let [tooltip (dom/get-element id)]
+                 (let [origin-brect
+                       (dom/get-bounding-rect (mf/ref-val trigger-ref))
 
-               (add-schedule schedule-ref delay update-position)))))
+                       update-position
+                       (fn []
+                         (let [new-placement (update-tooltip-position tooltip placement origin-brect offset)]
+                           (when (not= new-placement placement)
+                             (reset! placement* new-placement))))]
+
+                   (add-schedule schedule-ref delay update-position)))))))
 
         on-hide
         (mf/use-fn
@@ -253,7 +257,8 @@
                           :on-focus on-show
                           :on-blur on-hide
                           :on-key-down handle-key-down
-                          :class (stl/css :tooltip-trigger)
+                          :ref trigger-ref
+                          :class [class (stl/css :tooltip-trigger)]
                           :aria-describedby id})
         content
         (if (fn? content)
@@ -262,7 +267,7 @@
 
     [:> :div props
      children
-     [:div {:class [class (stl/css :tooltip)]
+     [:div {:class (stl/css :tooltip)
             :id id
             :popover "auto"
             :role "tooltip"}

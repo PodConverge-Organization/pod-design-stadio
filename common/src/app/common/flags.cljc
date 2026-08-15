@@ -33,7 +33,9 @@
     :login-with-ldap
     ;; Uses any generic authentication provider that implements OIDC protocol as credentials.
     :login-with-oidc
-    ;; Allows registration with Open ID
+    ;; Enables custom SSO flow
+    :login-with-custom-sso
+    ;; Allows registration with OIDC (takes effect only when general `registration` is disabled)
     :oidc-registration
     ;; This logs to console the invitation tokens. It's useful in case the SMTP is not configured.
     :log-invitation-tokens})
@@ -60,6 +62,7 @@
   #{:audit-log
     :audit-log-archive
     :audit-log-gc
+    :audit-log-logger
     :auto-file-snapshot
     ;; enables the `/api/doc` endpoint that lists all the rpc methods available.
     :backend-api-doc
@@ -118,20 +121,38 @@
     :terms-and-privacy-checkbox
     ;; Only for developtment.
     :tiered-file-data-storage
-    :token-units
-    :token-typography-types
+    :token-base-font-size
+    :token-color
+    :token-shadow
+    :token-tokenscript
     :transit-readable-response
     :user-feedback
     ;; TODO: remove this flag.
     :v2-migration
     :webhooks
     ;; TODO: deprecate this flag and consolidate the code
-    :export-file-v3
     :render-wasm-dpr
     :hide-release-modal
     :subscriptions
     :subscriptions-old
-    :frontend-binary-fills})
+    :inspect-styles
+    ;; Enable performance logs in devconsole (disabled by default)
+    :perf-logs
+
+    ;; Security layer middleware that filters request by fetch
+    ;; metadata headers
+    :sec-fetch-metadata-middleware
+
+    ;; Security layer middleware that check the precense of x-client
+    ;; http headers and enables an addtional csrf protection
+    :client-header-check-middleware
+
+    ;; A temporal flag, enables backend code use more extensivelly
+    ;; redis for caching data
+    :redis-cache
+
+    ;; Activates the nitrate module
+    :nitrate})
 
 (def all-flags
   (set/union email login varia))
@@ -153,7 +174,11 @@
    :enable-dashboard-templates-section
    :enable-google-fonts-provider
    :enable-component-thumbnails
-   :enable-render-wasm-dpr])
+   :enable-render-wasm-dpr
+   :enable-token-color
+   :enable-token-shadow
+   :enable-inspect-styles
+   :enable-feature-fdata-objects-map])
 
 (defn parse
   [& flags]

@@ -6,7 +6,7 @@
  * Copyright (c) KALEIDOS INC
  */
 
-import { isInline } from "./Inline.js";
+import { isTextSpan } from "./TextSpan.js";
 import { isLineBreak } from "./LineBreak.js";
 import { isParagraph } from "./Paragraph.js";
 import { isEditor } from "./Editor.js";
@@ -22,8 +22,7 @@ import { isRoot } from "./Root.js";
  */
 export function isTextNode(node) {
   if (!node) throw new TypeError("Invalid text node");
-  return node.nodeType === Node.TEXT_NODE
-      || isLineBreak(node);
+  return node.nodeType === Node.TEXT_NODE || isLineBreak(node);
 }
 
 /**
@@ -33,8 +32,7 @@ export function isTextNode(node) {
  * @returns {boolean}
  */
 export function isEmptyTextNode(node) {
-  return node.nodeType === Node.TEXT_NODE
-      && node.nodeValue === "";
+  return node.nodeType === Node.TEXT_NODE && node.nodeValue === "";
 }
 
 /**
@@ -58,7 +56,7 @@ export function getTextNodeLength(node) {
  */
 export function getClosestTextNode(node) {
   if (isTextNode(node)) return node;
-  if (isInline(node)) return node.firstChild;
+  if (isTextSpan(node)) return node.firstChild;
   if (isParagraph(node)) return node.firstChild.firstChild;
   if (isRoot(node)) return node.firstChild.firstChild.firstChild;
   if (isEditor(node)) return node.firstChild.firstChild.firstChild.firstChild;

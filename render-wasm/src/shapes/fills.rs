@@ -231,7 +231,8 @@ pub fn merge_fills(fills: &[Fill], bounding_box: Rect) -> skia::Paint {
     let mut fills_paint = skia::Paint::default();
 
     if fills.is_empty() {
-        fills_paint.set_color(skia::Color::TRANSPARENT);
+        combined_shader = Some(skia::shaders::color(skia::Color::TRANSPARENT));
+        fills_paint.set_shader(combined_shader);
         return fills_paint;
     }
 
@@ -254,7 +255,12 @@ pub fn merge_fills(fills: &[Fill], bounding_box: Rect) -> skia::Paint {
     fills_paint
 }
 
-pub fn set_paint_fill(paint: &mut Paint, fill: &Fill, bounding_box: &Rect) {
+pub fn set_paint_fill(paint: &mut Paint, fill: &Fill, bounding_box: &Rect, remove_alpha: bool) {
+    if remove_alpha {
+        paint.set_color(skia::Color::BLACK);
+        paint.set_alpha(255);
+        return;
+    }
     let shader = get_fill_shader(fill, bounding_box);
     if let Some(shader) = shader {
         paint.set_shader(shader);

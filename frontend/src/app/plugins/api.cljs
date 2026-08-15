@@ -8,6 +8,7 @@
   "RPC for plugins runtime."
   (:require
    [app.common.data :as d]
+   [app.common.data.macros :as dm]
    [app.common.files.changes-builder :as cb]
    [app.common.files.helpers :as cfh]
    [app.common.geom.point :as gpt]
@@ -25,12 +26,14 @@
    [app.main.data.workspace.groups :as dwg]
    [app.main.data.workspace.media :as dwm]
    [app.main.data.workspace.selection :as dws]
+   [app.main.data.workspace.wasm-text :as dwwt]
    [app.main.fonts :refer [fetch-font-css]]
    [app.main.router :as rt]
    [app.main.store :as st]
    [app.main.ui.shapes.text.fontfaces :refer [shapes->fonts]]
    [app.plugins.events :as events]
    [app.plugins.file :as file]
+   [app.plugins.flags :as flags]
    [app.plugins.fonts :as fonts]
    [app.plugins.format :as format]
    [app.plugins.history :as history]
@@ -39,6 +42,7 @@
    [app.plugins.page :as page]
    [app.plugins.parser :as parser]
    [app.plugins.shape :as shape]
+   [app.plugins.system-events :as se]
    [app.plugins.user :as user]
    [app.plugins.utils :as u]
    [app.plugins.viewport :as viewport]
@@ -64,7 +68,10 @@
             (cb/with-objects (:objects page))
             (cb/add-object shape))]
 
-    (st/emit! (ch/commit-changes changes))
+    (st/emit!
+     (ch/commit-changes changes)
+     (se/event plugin-id "create-shape" :type type))
+
     (shape/shape-proxy plugin-id (:id shape))))
 
 (defn create-context
@@ -122,6 +129,9 @@
 
     :fonts
     {:get (fn [] (fonts/fonts-subcontext plugin-id))}
+
+    :flags
+    {:get (fn [] (flags/flags-proxy plugin-id))}
 
     :library
     {:get (fn [] (library/library-subcontext plugin-id))}
@@ -284,7 +294,8 @@
               page-id (:current-page-id @st/state)
               id (uuid/next)
               ids (into #{} (map #(obj/get % "$id")) shapes)]
-          (st/emit! (dwg/group-shapes id ids))
+          (st/emit! (dwg/group-shapes id ids)
+                    (se/event plugin-id "create-shape" :type type))
           (shape/shape-proxy plugin-id file-id page-id id))))
 
     :ungroup
@@ -326,7 +337,8 @@
                 (cb/with-objects (:objects page))
                 (cb/add-object shape))]
 
-        (st/emit! (ch/commit-changes changes))
+        (st/emit! (ch/commit-changes changes)
+                  (se/event plugin-id "create-shape" :type :path))
         (shape/shape-proxy plugin-id (:id shape))))
 
     :createText
@@ -337,16 +349,25 @@
 
         :else
         (let [page  (dsh/lookup-page @st/state)
-              shape (-> (cts/setup-shape {:type :text :x 0 :y 0 :grow-type :auto-width})
-                        (txt/change-text text)
-                        (assoc :position-data nil))
+              shape (-> (cts/setup-shape {:type :text
+                                          :x 0 :y 0
+                                          :width 1 :height 1
+                                          :grow-type :auto-width})
+                        (update :content txt/change-text text
+                                ;; Text should be given a color by default
+                                {:fills [{:fill-color "#000000" :fill-opacity 1}]})
+                        (dissoc :position-data))
+
               changes
               (-> (cb/empty-changes)
                   (cb/with-page page)
                   (cb/with-objects (:objects page))
                   (cb/add-object shape))]
 
-          (st/emit! (ch/commit-changes changes))
+          (st/emit! (ch/commit-changes changes)
+                    (se/event plugin-id "create-shape" :type :text)
+                    (dwwt/resize-wasm-text-debounce (:id shape)))
+
           (shape/shape-proxy plugin-id (:id shape)))))
 
     :createShapeFromSvg
@@ -359,7 +380,8 @@
         (let [id (uuid/next)
               file-id (:current-file-id @st/state)
               page-id (:current-page-id @st/state)]
-          (st/emit! (dwm/create-svg-shape id "svg" svg-string (gpt/point 0 0)))
+          (st/emit! (dwm/create-svg-shape id "svg" svg-string (gpt/point 0 0))
+                    (se/event plugin-id "create-shape" :type :svg))
           (shape/shape-proxy plugin-id file-id page-id id))))
 
     :createShapeFromSvgWithImages
@@ -379,7 +401,8 @@
              (st/emit! (dwm/create-svg-shape-with-images
                         file-id id "svg" svg-string (gpt/point 0 0)
                         #(resolve (shape/shape-proxy plugin-id file-id page-id id))
-                        reject)))))))
+                        reject)
+                       (se/event plugin-id "create-shape" :type :text)))))))
 
     :createBoolean
     (fn [bool-type shapes]
@@ -394,7 +417,8 @@
           :else
           (let [ids      (into #{} (map #(obj/get % "$id")) shapes)
                 shape-id (uuid/next)]
-            (st/emit! (dwb/create-bool bool-type :ids ids :force-shape-id shape-id))
+            (st/emit! (dwb/create-bool bool-type :ids ids :force-shape-id shape-id)
+                      (se/event plugin-id "create-shape" :type :boolean))
             (shape/shape-proxy plugin-id shape-id)))))
 
     :generateMarkup
@@ -408,9 +432,27 @@
           (u/display-not-valid :generateMarkup-type type)
 
           :else
-          (let [objects (u/locate-objects)
-                shapes (into [] (map u/proxy->shape) shapes)]
-            (cg/generate-formatted-markup-code objects type shapes)))))
+          (let [resolved-code
+                (->> shapes
+                     (into
+                      #{}
+                      (map (fn [s]
+                             (-> (u/proxy->shape s)
+                                 (assoc :page-id (obj/get s "$page"))
+                                 (assoc :file-id (obj/get s "$file"))))))
+                     (group-by :page-id)
+
+                     (reduce-kv
+                      (fn [acc _ shapes]
+                        (let [shape (first shapes)
+                              objects (u/locate-objects (:file-id shape) (:page-id shape))
+                              resolved-shapes
+                              (->> (cfh/clean-loops objects shapes)
+                                   (mapcat #(cfh/get-children-with-self objects (:id %))))]
+                          (conj acc (cg/generate-formatted-markup-code objects type resolved-shapes))))
+                      []))]
+
+            (->> resolved-code (str/join "\n"))))))
 
     :generateStyle
     (fn [shapes options]
@@ -431,18 +473,35 @@
           (u/display-not-valid :generateStyle-includeChildren children?)
 
           :else
-          (let [objects (u/locate-objects)
-                shapes
-                (->> (into #{} (map u/proxy->shape) shapes)
-                     (cfh/clean-loops objects))
+          (let [resolved-styles
+                (->> shapes
+                     (into
+                      #{}
+                      (map (fn [s]
+                             (-> (u/proxy->shape s)
+                                 (assoc :page-id (obj/get s "$page"))
+                                 (assoc :file-id (obj/get s "$file"))))))
+                     (group-by :page-id)
 
-                shapes-with-children
-                (if children?
-                  (->> shapes
-                       (mapcat #(cfh/get-children-with-self objects (:id %))))
-                  shapes)]
-            (cg/generate-style-code
-             objects type shapes shapes-with-children {:with-prelude? prelude?})))))
+                     (reduce-kv
+                      (fn [acc _ shapes]
+                        (let [shape (first shapes)
+                              objects (u/locate-objects (:file-id shape) (:page-id shape))
+
+                              resolved-shapes
+                              (cond->> (cfh/clean-loops objects shapes)
+                                children?
+                                (mapcat #(cfh/get-children-with-self objects (:id %))))]
+
+                          (conj
+                           acc
+                           (cg/generate-style-code
+                            objects type shapes resolved-shapes {:with-prelude? prelude?}))))
+                      []))]
+            (dm/str
+             (if prelude? (cg/prelude type) "")
+             (->> resolved-styles
+                  (str/join "\n\n")))))))
 
     :generateFontFaces
     (fn [shapes]
@@ -475,10 +534,12 @@
             id (uuid/next)]
         (st/emit! (dw/create-page {:page-id id :file-id file-id}))
         (page/page-proxy plugin-id file-id id)))
+
     :openPage
-    (fn [page]
-      (let [id (obj/get page "$id")]
-        (st/emit! (dcm/go-to-workspace :page-id id ::rt/new-window true))))
+    (fn [page new-window]
+      (let [id (obj/get page "$id")
+            new-window (if (boolean? new-window) new-window true)]
+        (st/emit! (dcm/go-to-workspace :page-id id ::rt/new-window new-window))))
 
     :alignHorizontal
     (fn [shapes direction]

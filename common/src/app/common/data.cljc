@@ -1024,6 +1024,55 @@
       :clj
       (sort comp-fn items))))
 
+(defn obfuscate-string
+  "Obfuscates potentially sensitive values.
+
+  - One-arg arity:
+    * For strings shorter than 10 characters, all characters are replaced by `*`.
+    * For longer strings, the first 5 characters are preserved and the rest obfuscated.
+  - Two-arg arity accepts a boolean `full?` that, when true, replaces the whole value
+    by `*`, preserving only the length."
+  ([v]
+   (obfuscate-string v false))
+  ([v full?]
+   (let [s (str v)
+         n (count s)]
+     (cond
+       (zero? n) s
+       full? (apply str (repeat n "*"))
+       (< n 10) (apply str (repeat n "*"))
+       :else (str (subs s 0 5)
+                  (apply str (repeat (- n 5) "*")))))))
+
+(defn reorder
+  "Reorder a vector by moving one of their items from some position to some space between positions.
+   It clamps the position numbers to a valid range."
+  [v from-pos to-space-between-pos]
+  (let [max-space-pos  (count v)
+        max-prop-pos   (dec max-space-pos)
+
+        from-pos             (max 0 (min max-prop-pos from-pos))
+        to-space-between-pos (max 0 (min max-space-pos to-space-between-pos))]
+
+    (if (= from-pos to-space-between-pos)
+      v
+      (let [elem         (nth v from-pos)
+            without-elem (-> []
+                             (into (subvec v 0 from-pos))
+                             (into (subvec v (inc from-pos))))
+            insert-pos   (if (< from-pos to-space-between-pos)
+                           (dec to-space-between-pos)
+                           to-space-between-pos)]
+        (-> []
+            (into (subvec without-elem 0 insert-pos))
+            (into [elem])
+            (into (subvec without-elem insert-pos)))))))
+
+(defn invert-map
+  "Returns a map with keys and values swapped.
+   If the input map has duplicate values, later entries overwrite earlier ones."
+  [m]
+  (into {} (map (fn [[k v]] [v k]) m)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; String Functions
@@ -1043,9 +1092,9 @@
   (if (number? num)
     (try
       (let [num-str (mth/to-fixed num precision)
-               ;; Remove all trailing zeros after the comma 100.00000
+            ;; Remove all trailing zeros after the comma 100.00000
             num-str (str/replace num-str trail-zeros-regex-1 "")]
-           ;; Remove trailing zeros after a decimal number: 0.001|00|
+        ;; Remove trailing zeros after a decimal number: 0.001|00|
         (if-let [m (re-find trail-zeros-regex-2 num-str)]
           (str/replace num-str (first m) (second m))
           num-str))

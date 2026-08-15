@@ -19,19 +19,17 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def schema:component
-  (sm/register!
-   ^{::sm/type ::component}
-   [:merge
-    [:map
-     [:id ::sm/uuid]
-     [:name :string]
-     [:path {:optional true} [:maybe :string]]
-     [:modified-at {:optional true} ::ct/inst]
-     [:objects {:gen/max 10 :optional true} ctp/schema:objects]
-     [:main-instance-id ::sm/uuid]
-     [:main-instance-page ::sm/uuid]
-     [:plugin-data {:optional true} ctpg/schema:plugin-data]]
-    ctv/schema:variant-component]))
+  [:merge
+   [:map
+    [:id ::sm/uuid]
+    [:name :string]
+    [:path :string]
+    [:modified-at {:optional true} ::ct/inst]
+    [:objects {:gen/max 10 :optional true} ctp/schema:objects]
+    [:main-instance-id ::sm/uuid]
+    [:main-instance-page ::sm/uuid]
+    [:plugin-data {:optional true} ctpg/schema:plugin-data]]
+   ctv/schema:variant-component])
 
 (def check-component
   (sm/check-fn schema:component))
@@ -99,6 +97,8 @@
    :exports                 :exports-group
    :grids                   :grids-group
 
+   :show-content            :show-content
+
    :layout                  :layout-container
 
    :layout-align-content    :layout-align-content
@@ -140,14 +140,18 @@
     :layout-item-min-w
     :layout-item-absolute
     :layout-item-z-index
-    :layout-item-align-self})
+    :layout-item-align-self
+    :interactions})
 
 (defn component-attr?
   "Check if some attribute is one that is involved in component syncrhonization.
    Note that design tokens also are involved, although they go by an alternate
-   route and thus they are not part of :sync-attrs."
+   route and thus they are not part of :sync-attrs.
+   Also when detaching a nested copy it also needs to trigger a synchronization,
+   even though :shape-ref is not a synced attribute per se"
   [attr]
   (or (get sync-attrs attr)
+      (= :shape-ref attr)
       (= :applied-tokens attr)))
 
 (defn instance-root?
@@ -217,18 +221,15 @@
   (and (= shape-id (:main-instance-id component))
        (= page-id (:main-instance-page component))))
 
-
 (defn is-variant?
   "Check if this shape or component is a variant component"
   [item]
   (some? (:variant-id item)))
 
-
 (defn is-variant-container?
   "Check if this shape is a variant container"
   [shape]
   (:is-variant-container shape))
-
 
 (defn set-touched-group
   [touched group]
@@ -256,7 +257,7 @@
 
 (defn group->swap-slot
   [group]
-  (parse-uuid (subs (name group) 10)))
+  (parse-uuid (subs (name group) 10)))  ;; 10 is the length of "swap-slot-"
 
 (defn get-swap-slot
   "If the shape has a :touched group in the form :swap-slot-<uuid>, get the id."
@@ -286,7 +287,7 @@
           (fn [touched]
             (into #{} (remove #(str/starts-with? (name %) "swap-slot-") touched)))))
 
-(defn get-component-root
+(defn get-deleted-component-root
   [component]
   (if (some? (:main-instance-id component))
     (get-in component [:objects (:main-instance-id component)])
@@ -309,6 +310,22 @@
           :remote-synced
           :shape-ref
           :touched))
+
+(defn unhead-shape
+  "Make the shape not be a component head, but keep its :shape-ref and :touched if it was a nested copy"
+  [shape]
+  (dissoc shape
+          :component-root
+          :component-file
+          :component-id
+          :main-instance))
+
+(defn rehead-shape
+  "Make the shape a component head, by adding component info"
+  [shape component-file component-id]
+  (assoc shape
+         :component-file component-file
+         :component-id component-id))
 
 (defn- extract-ids [shape]
   (if (map? shape)

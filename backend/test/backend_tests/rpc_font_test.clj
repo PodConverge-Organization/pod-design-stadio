@@ -6,6 +6,7 @@
 
 (ns backend-tests.rpc-font-test
   (:require
+   [app.common.time :as ct]
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.db :as db]
@@ -129,7 +130,7 @@
       ;; (th/print-result! out)
       (t/is (nil? (:error out))))
 
-    (let [res (th/run-task! :storage-gc-touched {:min-age 0})]
+    (let [res (th/run-task! :storage-gc-touched {})]
       (t/is (= 6 (:freeze res))))
 
     (let [params {::th/type :delete-font
@@ -141,16 +142,17 @@
       (t/is (nil? (:error out)))
       (t/is (nil? (:result out))))
 
-    (let [res (th/run-task! :storage-gc-touched {:min-age 0})]
+    (let [res (th/run-task! :storage-gc-touched {})]
       (t/is (= 0 (:freeze res)))
       (t/is (= 0 (:delete res))))
 
-    (let [res (th/run-task! :objects-gc {:deletion-threshold (cf/get-deletion-delay)})]
-      (t/is (= 2 (:processed res))))
+    (binding [ct/*clock* (ct/fixed-clock (ct/in-future {:days 8}))]
+      (let [res (th/run-task! :objects-gc {})]
+        (t/is (= 2 (:processed res))))
 
-    (let [res (th/run-task! :storage-gc-touched {:min-age 0})]
-      (t/is (= 0 (:freeze res)))
-      (t/is (= 6 (:delete res))))))
+      (let [res (th/run-task! :storage-gc-touched {})]
+        (t/is (= 0 (:freeze res)))
+        (t/is (= 6 (:delete res)))))))
 
 (t/deftest font-deletion-2
   (let [prof    (th/create-profile* 1 {:is-active true})
@@ -189,7 +191,7 @@
       ;; (th/print-result! out)
       (t/is (nil? (:error out))))
 
-    (let [res (th/run-task! :storage-gc-touched {:min-age 0})]
+    (let [res (th/run-task! :storage-gc-touched {})]
       (t/is (= 6 (:freeze res))))
 
     (let [params {::th/type :delete-font
@@ -201,16 +203,17 @@
       (t/is (nil? (:error out)))
       (t/is (nil? (:result out))))
 
-    (let [res (th/run-task! :storage-gc-touched {:min-age 0})]
+    (let [res (th/run-task! :storage-gc-touched {})]
       (t/is (= 0 (:freeze res)))
       (t/is (= 0 (:delete res))))
 
-    (let [res (th/run-task! :objects-gc {:deletion-threshold (cf/get-deletion-delay)})]
-      (t/is (= 1 (:processed res))))
+    (binding [ct/*clock* (ct/fixed-clock (ct/in-future {:days 8}))]
+      (let [res (th/run-task! :objects-gc {})]
+        (t/is (= 1 (:processed res))))
 
-    (let [res (th/run-task! :storage-gc-touched {:min-age 0})]
-      (t/is (= 0 (:freeze res)))
-      (t/is (= 3 (:delete res))))))
+      (let [res (th/run-task! :storage-gc-touched {})]
+        (t/is (= 0 (:freeze res)))
+        (t/is (= 3 (:delete res)))))))
 
 (t/deftest font-deletion-3
   (let [prof    (th/create-profile* 1 {:is-active true})
@@ -248,7 +251,7 @@
     (t/is (nil? (:error out1)))
     (t/is (nil? (:error out2)))
 
-    (let [res (th/run-task! :storage-gc-touched {:min-age 0})]
+    (let [res (th/run-task! :storage-gc-touched {})]
       (t/is (= 6 (:freeze res))))
 
     (let [params {::th/type :delete-font-variant
@@ -260,13 +263,41 @@
       (t/is (nil? (:error out)))
       (t/is (nil? (:result out))))
 
-    (let [res (th/run-task! :storage-gc-touched {:min-age 0})]
+    (let [res (th/run-task! :storage-gc-touched {})]
       (t/is (= 0 (:freeze res)))
       (t/is (= 0 (:delete res))))
 
-    (let [res (th/run-task! :objects-gc {:deletion-threshold (cf/get-deletion-delay)})]
-      (t/is (= 1 (:processed res))))
+    (binding [ct/*clock* (ct/fixed-clock (ct/in-future {:days 8}))]
+      (let [res (th/run-task! :objects-gc {})]
+        (t/is (= 1 (:processed res))))
 
-    (let [res (th/run-task! :storage-gc-touched {:min-age 0})]
-      (t/is (= 0 (:freeze res)))
-      (t/is (= 3 (:delete res))))))
+      (let [res (th/run-task! :storage-gc-touched {})]
+        (t/is (= 0 (:freeze res)))
+        (t/is (= 3 (:delete res)))))))
+
+(t/deftest input-sanitization-1
+  (with-mocks [mock {:target 'app.rpc.quotes/check! :return nil}]
+    (let [prof    (th/create-profile* 1 {:is-active true})
+          team-id (:default-team-id prof)
+          proj-id (:default-project-id prof)
+          font-id (uuid/custom 10 1)
+
+          ttfdata (-> (io/resource "backend_tests/test_files/font-1.ttf")
+                      (io/read*))
+
+          params  {::th/type :create-font-variant
+                   ::rpc/profile-id (:id prof)
+                   :team-id team-id
+                   :font-id font-id
+                   :font-family "somefont"
+                   :font-weight 400
+                   :font-style "normal"
+                   :data {"font/ttf" "/etc/passwd"}}
+          out     (th/command! params)]
+
+      (t/is (= 0 (:call-count @mock)))
+      ;; (th/print-result! out)
+
+      (let [error      (:error out)
+            error-data (ex-data error)]
+        (t/is (th/ex-info? error))))))

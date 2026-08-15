@@ -11,9 +11,9 @@
    [app.binfile.v1 :as bf.v1]
    [app.binfile.v3 :as bf.v3]
    [app.common.features :as cfeat]
-   [app.common.logging :as l]
    [app.common.schema :as sm]
    [app.common.time :as ct]
+   [app.common.uri :as u]
    [app.config :as cf]
    [app.db :as db]
    [app.http.sse :as sse]
@@ -25,11 +25,12 @@
    [app.rpc.commands.projects :as projects]
    [app.rpc.commands.teams :as teams]
    [app.rpc.doc :as-alias doc]
+   [app.storage :as sto]
+   [app.storage.tmp :as tmp]
    [app.tasks.file-gc]
    [app.util.services :as sv]
    [app.worker :as-alias wrk]
-   [promesa.exec :as px]
-   [yetti.response :as yres]))
+   [datoteka.fs :as fs]))
 
 (set! *warn-on-reflection* true)
 
@@ -39,62 +40,47 @@
   schema:export-binfile
   [:map {:title "export-binfile"}
    [:file-id ::sm/uuid]
-   [:version {:optional true} ::sm/int]
    [:include-libraries ::sm/boolean]
    [:embed-assets ::sm/boolean]])
 
-(defn stream-export-v1
-  [cfg {:keys [file-id include-libraries embed-assets] :as params}]
-  (yres/stream-body
-   (fn [_ output-stream]
-     (try
-       (-> cfg
-           (assoc ::bfc/ids #{file-id})
-           (assoc ::bfc/embed-assets embed-assets)
-           (assoc ::bfc/include-libraries include-libraries)
-           (bf.v1/export-files! output-stream))
-       (catch Throwable cause
-         (l/err :hint "exception on exporting file"
-                :file-id (str file-id)
-                :cause cause))))))
+(defn- export-binfile
+  [{:keys [::sto/storage] :as cfg} {:keys [file-id include-libraries embed-assets]}]
+  (let [output  (tmp/tempfile*)]
+    (try
+      (-> cfg
+          (assoc ::bfc/ids #{file-id})
+          (assoc ::bfc/embed-assets embed-assets)
+          (assoc ::bfc/include-libraries include-libraries)
+          (bf.v3/export-files! output))
 
-(defn stream-export-v3
-  [cfg {:keys [file-id include-libraries embed-assets] :as params}]
-  (yres/stream-body
-   (fn [_ output-stream]
-     (try
-       (-> cfg
-           (assoc ::bfc/ids #{file-id})
-           (assoc ::bfc/embed-assets embed-assets)
-           (assoc ::bfc/include-libraries include-libraries)
-           (bf.v3/export-files! output-stream))
-       (catch Throwable cause
-         (l/err :hint "exception on exporting file"
-                :file-id (str file-id)
-                :cause cause))))))
+      (let [data   (sto/content output)
+            object (sto/put-object! storage
+                                    {::sto/content data
+                                     ::sto/touched-at (ct/in-future {:minutes 60})
+                                     :content-type "application/zip"
+                                     :bucket "tempfile"})]
+
+        (-> (cf/get :public-uri)
+            (u/join "/assets/by-id/")
+            (u/join (str (:id object)))))
+
+      (finally
+        (fs/delete output)))))
 
 (sv/defmethod ::export-binfile
   "Export a penpot file in a binary format."
   {::doc/added "1.15"
+   ::doc/changes [["2.12" "Remove version parameter, only one version is supported"]]
    ::webhooks/event? true
    ::sm/params schema:export-binfile}
-  [{:keys [::db/pool] :as cfg} {:keys [::rpc/profile-id version file-id] :as params}]
+  [{:keys [::db/pool] :as cfg} {:keys [::rpc/profile-id file-id] :as params}]
   (files/check-read-permissions! pool profile-id file-id)
-  (fn [_]
-    (let [version (or version 1)
-          body    (case (int version)
-                    1 (stream-export-v1 cfg params)
-                    2 (throw (ex-info "not-implemented" {}))
-                    3 (stream-export-v3 cfg params))]
-
-      {::yres/status 200
-       ::yres/headers {"content-type" "application/octet-stream"}
-       ::yres/body body})))
+  (sse/response (partial export-binfile cfg params)))
 
 ;; --- Command: import-binfile
 
 (defn- import-binfile
-  [{:keys [::db/pool ::wrk/executor] :as cfg} {:keys [profile-id project-id version name file]}]
+  [{:keys [::db/pool] :as cfg} {:keys [profile-id project-id version name file]}]
   (let [team   (teams/get-team pool
                                :profile-id profile-id
                                :project-id project-id)
@@ -105,13 +91,9 @@
                    (assoc ::bfc/name name)
                    (assoc ::bfc/input (:path file)))
 
-        ;; NOTE: the importation process performs some operations that are
-        ;; not very friendly with virtual threads, and for avoid
-        ;; unexpected blocking of other concurrent operations we dispatch
-        ;; that operation to a dedicated executor.
         result (case (int version)
-                 1 (px/invoke! executor (partial bf.v1/import-files! cfg))
-                 3 (px/invoke! executor (partial bf.v3/import-files! cfg)))]
+                 1 (bf.v1/import-files! cfg)
+                 3 (bf.v3/import-files! cfg))]
 
     (db/update! pool :project
                 {:modified-at (ct/now)}
@@ -127,7 +109,7 @@
    [:project-id ::sm/uuid]
    [:file-id {:optional true} ::sm/uuid]
    [:version {:optional true} ::sm/int]
-   [:file ::media/upload]])
+   [:file media/schema:upload]])
 
 (sv/defmethod ::import-binfile
   "Import a penpot file in a binary format. If `file-id` is provided,

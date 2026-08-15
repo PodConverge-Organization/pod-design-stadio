@@ -10,12 +10,14 @@
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.files.helpers :as cfh]
+   [app.common.geom.rect :as grc]
    [app.common.geom.shapes :as gsh]
    [app.common.geom.shapes.text :as gst]
    [app.common.math :as mth]
    [app.common.types.color :as color]
    [app.common.types.text :as txt]
    [app.config :as cf]
+   [app.main.data.helpers :as dsh]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.text-defaults :as text-defaults]
    [app.main.data.workspace.texts :as dwt]
@@ -32,6 +34,7 @@
    [app.util.object :as obj]
    [app.util.text.content :as content]
    [app.util.text.content.styles :as styles]
+   [cuerdas.core :as str]
    [rumext.v2 :as mf]))
 
 (defn get-contrast-color [background-color]
@@ -60,46 +63,38 @@
                (when (some? font-id)
                  (fonts/ensure-loaded! font-id variant-id))))))
 
-(defn new-text-style-defaults
-  [default-font text-color]
-  (styles/get-style-defaults
-   (text-defaults/ensure-valid-font-size
-    (merge
-     (txt/get-default-text-attrs)
-     text-defaults/new-text-baseline
-     {:fills [{:fill-color text-color :fill-opacity 1}]}
-     txt/default-root-attrs
-     default-font))))
-
-(defn create-editor-instance!
-  [editor-node selection-node default-font text-color]
-  (let [options
-        #js {:styleDefaults (new-text-style-defaults default-font text-color)
-             :selectionImposterElement selection-node}]
-    (dwt/create-editor editor-node options)))
-
-(defn load-existing-content!
-  [instance content]
-  (when (some? content)
-    (dwt/set-editor-root! instance (content/cljs->dom content))))
-
 (defn- initialize-event-handlers
   "Internal editor events handler initializer/destructor"
-  [shape-id content selection-ref editor-ref container-ref text-color]
+  [shape-id content editor-ref canvas-ref container-ref text-color]
   (let [editor-node
         (mf/ref-val editor-ref)
 
-        selection-node
-        (mf/ref-val selection-ref)
+        canvas-node
+        (mf/ref-val canvas-ref)
 
         ;; Gets the default font from the workspace refs.
         default-font
         (deref refs/default-font)
 
-        instance
-        (create-editor-instance! editor-node selection-node default-font text-color)
+        style-defaults
+        (styles/get-style-defaults
+         (text-defaults/ensure-valid-font-size
+          (merge
+           (txt/get-default-text-attrs)
+           text-defaults/new-text-baseline
+           {:fills [{:fill-color text-color :fill-opacity 1}]}
+           txt/default-root-attrs
+           default-font)))
 
-        update-name? (nil? content)
+        options
+        #js {:styleDefaults style-defaults
+             :allowHTMLPaste (features/active-feature? @st/state "text-editor/v2-html-paste")}
+
+        instance
+        (dwt/create-editor editor-node canvas-node options)
+
+        ;; Store original content to compare name later
+        original-content content
 
         on-key-up
         (fn [event]
@@ -110,10 +105,23 @@
         on-blur
         (fn []
           (when-let [content (content/dom->cljs (dwt/get-editor-root instance))]
-            (st/emit! (dwt/v2-update-text-shape-content shape-id content
-                                                        :update-name? update-name?
-                                                        :name (gen-name instance)
-                                                        :finalize? true)))
+            (let [state @st/state
+                  objects (dsh/lookup-page-objects state)
+                  shape (get objects shape-id)
+                  current-name (:name shape)
+                  generated-name (gen-name instance)
+                  ;; Update name if: (1) it's a new shape (nil original content), or
+                  ;; (2) the current name matches the generated name from original content
+                  ;; (meaning it was never manually renamed)
+                  update-name? (or (nil? original-content)
+                                   (and (some? current-name)
+                                        (some? original-content)
+                                        (= current-name (txt/generate-shape-name (txt/content->text original-content)))))]
+              (st/emit! (dwt/v2-update-text-shape-content shape-id content
+                                                          :update-name? update-name?
+                                                          :name generated-name
+                                                          :finalize? true
+                                                          :save-undo? false))))
 
           (let [container-node (mf/ref-val container-ref)]
             (dom/set-style! container-node "opacity" 0)))
@@ -131,15 +139,21 @@
         on-needs-layout
         (fn []
           (when-let [content (content/dom->cljs (dwt/get-editor-root instance))]
-            (st/emit! (dwt/v2-update-text-shape-content shape-id content :update-name? true)))
+            (st/emit! (dwt/v2-update-text-shape-content shape-id content
+                                                        :update-name? true
+                                                        :save-undo? false)))
           ;; FIXME: We need to find a better way to trigger layout changes.
           #_(st/emit!
              (dwt/v2-update-text-shape-position-data shape-id [])))
 
         on-change
         (fn []
-          (when-let [content (content/dom->cljs (dwt/get-editor-root instance))]
-            (st/emit! (dwt/v2-update-text-shape-content shape-id content :update-name? true))))
+          (let [is-empty? (dwt/is-empty? instance)
+                save-undo? (not is-empty?)]
+            (when-let [content (content/dom->cljs (dwt/get-editor-root instance))]
+              (st/emit! (dwt/v2-update-text-shape-content shape-id content
+                                                          :update-name? true
+                                                          :save-undo? save-undo?)))))
 
         on-clipboard-change
         (fn [event]
@@ -147,7 +161,6 @@
             (st/emit! (dw/set-clipboard-style style))))]
 
     (.addEventListener ^js global/document "keyup" on-key-up)
-    (.addEventListener ^js instance "blur" on-blur)
     (.addEventListener ^js instance "focus" on-focus)
     (.addEventListener ^js instance "needslayout" on-needs-layout)
     (.addEventListener ^js instance "stylechange" on-style-change)
@@ -155,14 +168,19 @@
     (.addEventListener ^js instance "clipboardchange" on-clipboard-change)
 
     (st/emit! (dwt/update-editor instance))
-    (load-existing-content! instance content)
+    (when (some? content)
+      (dwt/set-editor-root! instance (content/cljs->dom content)))
     (when (some? instance)
       (st/emit! (dwt/focus-editor)))
 
     ;; This function is called when the component is unmounted
     (fn []
+      ;; Explicitly call on-blur here instead of relying on browser blur events,
+      ;; because in Firefox blur is not reliably fired when leaving the text editor
+      ;; by clicking elsewhere. The component does unmount when the shape is
+      ;; deselected, so we can safely call the blur handler here to finalize the editor.
+      (on-blur)
       (.removeEventListener ^js global/document "keyup" on-key-up)
-      (.removeEventListener ^js instance "blur" on-blur)
       (.removeEventListener ^js instance "focus" on-focus)
       (.removeEventListener ^js instance "needslayout" on-needs-layout)
       (.removeEventListener ^js instance "stylechange" on-style-change)
@@ -191,7 +209,7 @@
   "Text editor (HTML)"
   {::mf/wrap [mf/memo]
    ::mf/props :obj}
-  [{:keys [shape]}]
+  [{:keys [shape canvas-ref]}]
   (let [content          (:content shape)
         shape-id         (dm/get-prop shape :id)
         fill-color       (get-color-from-content content)
@@ -201,7 +219,6 @@
         editor-ref       (mf/use-ref nil)
         ;; This reference is to the container
         container-ref    (mf/use-ref nil)
-        selection-ref    (mf/use-ref nil)
 
         page             (mf/deref refs/workspace-page)
         objects          (get page :objects)
@@ -224,8 +241,8 @@
     (mf/with-effect [shape-id]
       (initialize-event-handlers shape-id
                                  content
-                                 selection-ref
                                  editor-ref
+                                 canvas-ref
                                  container-ref
                                  text-color))
 
@@ -239,20 +256,17 @@
                      (stl/css :text-editor-container))
       :ref container-ref
       :data-testid "text-editor-container"
-      :style {:width (:width shape)
-              :height (:height shape)}
-      ;; We hide the editor when is blurred because otherwise the
-      ;; selection won't let us see the underlying text. Use opacity
-      ;; because display or visibility won't allow to recover focus
-      ;; afterwards.
+      :style {:width "var(--editor-container-width)"
+              :height "var(--editor-container-height)"}}
+     ;; We hide the editor when is blurred because otherwise the
+     ;; selection won't let us see the underlying text. Use opacity
+     ;; because display or visibility won't allow to recover focus
+     ;; afterwards.
 
-      ;; IMPORTANT! This is now done through DOM mutations (see
-      ;; on-blur and on-focus) but I keep this for future references.
-      ;; :opacity (when @blurred 0)}}
-      }
-     [:div
-      {:class (stl/css :text-editor-selection-imposter)
-       :ref selection-ref}]
+     ;; IMPORTANT! This is now done through DOM mutations (see
+     ;; on-blur and on-focus) but I keep this for future references.
+     ;; :opacity (when @blurred 0)}}
+
      [:div
       {:class (dm/str
                "mousetrap "
@@ -281,7 +295,12 @@
     "bottom" "flex-end"
     nil))
 
-;;
+(defn- font-family-from-font-id [font-id]
+  (if (str/includes? font-id "gfont-noto-sans")
+    (let [lang (str/replace font-id #"gfont\-noto\-sans\-" "")]
+      (if (>= (count lang) 3) (str/capital lang) (str/upper lang)))
+    "Noto Color Emoji"))
+
 ;; Text Editor Wrapper
 ;; This is an SVG element that wraps the HTML editor.
 ;;
@@ -290,9 +309,13 @@
   {::mf/wrap [mf/memo]
    ::mf/props :obj
    ::mf/forward-ref true}
-  [{:keys [shape modifiers] :as props} _]
+  [{:keys [shape modifiers canvas-ref] :as props} _]
   (let [shape-id  (dm/get-prop shape :id)
         modifiers (dm/get-in modifiers [shape-id :modifiers])
+
+        fallback-fonts (wasm.api/fonts-from-text-content (:content shape) false)
+        fallback-families (map (fn [font]
+                                 (font-family-from-font-id (:font-id font))) fallback-fonts)
 
         clip-id   (dm/str "text-edition-clip" shape-id)
 
@@ -319,12 +342,26 @@
                 (some? modifiers)
                 (gsh/transform-shape modifiers))
 
-        [x y width height]
-        (if (features/active-feature? @st/state "render-wasm/v1")
-          (let [{:keys [max-width height]} (wasm.api/text-dimensions shape-id)
-                {:keys [x y]} (:selrect shape)]
+        render-wasm? (mf/use-memo #(features/active-feature? @st/state "render-wasm/v1"))
 
-            [x y max-width height])
+        [{:keys [x y width height]} transform]
+        (if render-wasm?
+          (let [{:keys [width height]} (wasm.api/get-text-dimensions shape-id)
+                selrect-transform (mf/deref refs/workspace-selrect)
+                [selrect transform] (dsh/get-selrect selrect-transform shape)
+                selrect-height (:height selrect)
+                selrect-width (:width selrect)
+                max-width (max width selrect-width)
+                max-height (max height selrect-height)
+                valign (-> shape :content :vertical-align)
+                y (:y selrect)
+                y (if (and valign (> height selrect-height))
+                    (case valign
+                      "bottom" (- y (- height selrect-height))
+                      "center" (- y (/ (- height selrect-height) 2))
+                      y)
+                    y)]
+            [(assoc selrect :y y :width max-width :height max-height) transform])
 
           (let [bounds (gst/shape->rect shape)
                 x      (mth/min (dm/get-prop bounds :x)
@@ -335,12 +372,25 @@
                                 (dm/get-prop shape :width))
                 height (mth/max (dm/get-prop bounds :height)
                                 (dm/get-prop shape :height))]
-            [x y width height]))
+            [(grc/make-rect x y width height) (gsh/transform-matrix shape)]))
 
         style
         (cond-> #js {:pointerEvents "all"}
+          render-wasm?
+          (obj/merge!
+           #js {"--editor-container-width" (dm/str width "px")
+                "--editor-container-height" (dm/str height "px")
+                "--fallback-families" (if (seq fallback-families) (dm/str (str/join ", " fallback-families)) "sourcesanspro")})
 
-          (not (cf/check-browser? :safari))
+          (not render-wasm?)
+          (obj/merge!
+           #js {"--editor-container-width" (dm/str width "px")
+                "--editor-container-height" (dm/str height "px")})
+
+          ;; Transform is necessary when there is a text overflow and the vertical
+          ;; aligment is center or bottom.
+          (and (not render-wasm?)
+               (not (cf/check-browser? :safari)))
           (obj/merge!
            #js {:transform (dm/fmt "translate(%px, %px)" (- (dm/get-prop shape :x) x) (- (dm/get-prop shape :y) y))})
 
@@ -361,7 +411,8 @@
                              (dm/fmt "scale(%)" maybe-zoom))}))]
 
     [:g.text-editor {:clip-path (dm/fmt "url(#%)" clip-id)
-                     :transform (dm/str (gsh/transform-matrix shape))}
+                     :transform (dm/str transform)
+                     :data-testid "text-editor"}
      [:defs
       [:clipPath {:id clip-id}
        [:rect {:x x :y y :width width :height height}]]]
@@ -369,4 +420,5 @@
      [:foreignObject {:x x :y y :width width :height height}
       [:div {:style style}
        [:& text-editor-html {:shape shape
+                             :canvas-ref canvas-ref
                              :key (dm/str shape-id)}]]]]))

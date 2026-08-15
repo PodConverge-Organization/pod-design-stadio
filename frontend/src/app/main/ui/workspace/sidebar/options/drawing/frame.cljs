@@ -12,8 +12,9 @@
    [app.main.data.workspace.drawing :as dwd]
    [app.main.store :as st]
    [app.main.ui.components.dropdown :refer [dropdown]]
-   [app.main.ui.components.radio-buttons :refer [radio-button radio-buttons]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.ds.controls.radio-buttons :refer [radio-buttons*]]
+   [app.main.ui.ds.foundations.assets.icon :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [rumext.v2 :as mf]))
@@ -68,7 +69,7 @@
       [:span {:class (stl/css :select-name)}
        (or selected-preset-name
            (tr "workspace.options.size-presets"))]
-      [:span {:class (stl/css :collapsed-icon)} i/arrow]
+      [:span {:class (stl/css :collapsed-icon)} deprecated-icon/arrow]
       [:& dropdown {:show show?
                     :on-close on-close}
        [:ul {:class (stl/css :custom-select-dropdown)}
@@ -92,17 +93,17 @@
                 [:span {:class (stl/css :preset-name)} (:name preset)]
                 [:span {:class (stl/css :preset-size)} (:width preset) " x " (:height preset)]]
                (when preset-match
-                 [:span {:class (stl/css :check-icon)} i/tick])])))]]]
+                 [:span {:class (stl/css :check-icon)} deprecated-icon/tick])])))]]]
 
-     [:& radio-buttons {:selected (or (d/name orientation) "")
-                        :on-change on-orientation-change
-                        :name "frame-orientation"
-                        :wide true
-                        :class (stl/css :radio-buttons)}
-      [:& radio-button {:icon i/size-vertical
-                        :value "vertical"
-                        :id "size-vertical"}]
-      [:& radio-button {:icon i/size-horizontal
-                        :value "horizontal"
-                        :id "size-horizontal"}]]]))
-
+     [:> radio-buttons* {:class (stl/css :radio-buttons)
+                         :selected (or (d/name orientation) "")
+                         :on-change on-orientation-change
+                         :name "frame-orientation"
+                         :options [{:id "size-vertical"
+                                    :icon i/size-vertical
+                                    :label (tr "workspace.options.orientation.vertical")
+                                    :value "vertical"}
+                                   {:id "size-horizontal"
+                                    :icon i/size-horizontal
+                                    :label (tr "workspace.options.orientation.horizontal")
+                                    :value "horizontal"}]}]]))
