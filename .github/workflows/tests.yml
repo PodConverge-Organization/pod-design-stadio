@@ -23,7 +23,8 @@ jobs:
   lint:
     name: "Linter"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    # PodConverge pins the verified DevEnv digest for reproducible upgrade checkpoints.
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
 
     steps:
       - name: Checkout repository
@@ -36,7 +37,7 @@ jobs:
   test-common:
     name: "Common Tests"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
 
     steps:
       - name: Checkout repository
@@ -55,7 +56,7 @@ jobs:
   test-plugins:
     name: Plugins Runtime Linter & Tests
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
 
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +106,7 @@ jobs:
   test-frontend:
     name: "Frontend Tests"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
 
     steps:
       - name: Checkout repository
@@ -126,7 +127,7 @@ jobs:
   test-render-wasm:
     name: "Render WASM Tests"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
 
     steps:
       - name: Checkout repository
@@ -150,7 +151,7 @@ jobs:
   test-backend:
     name: "Backend Tests"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
 
     services:
       postgres:
@@ -189,7 +190,7 @@ jobs:
   test-library:
     name: "Library Tests"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
 
     steps:
       - name: Checkout repository
@@ -203,7 +204,7 @@ jobs:
   build-integration:
     name: "Build Integration Bundle"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
 
     steps:
       - name: Checkout repository
@@ -224,7 +225,7 @@ jobs:
   test-integration-1:
     name: "Integration Tests 1/4"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
     needs: build-integration
 
     steps:
@@ -254,7 +255,7 @@ jobs:
   test-integration-2:
     name: "Integration Tests 2/4"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
     needs: build-integration
 
     steps:
@@ -284,7 +285,7 @@ jobs:
   test-integration-3:
     name: "Integration Tests 3/4"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
     needs: build-integration
 
     steps:
@@ -314,7 +315,7 @@ jobs:
   test-integration-4:
     name: "Integration Tests 4/4"
     runs-on: ubuntu-latest
-    container: penpotapp/devenv:latest
+    container: penpotapp/devenv@sha256:adc6a3ba1cd45862ac614d683546c589f978af028993fec29b7155d77b05321e
     needs: build-integration
 
     steps:
