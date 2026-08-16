@@ -19,9 +19,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # This fork uses GitHub-hosted runners because no repository self-hosted runner is configured.
   lint:
     name: "Linter"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
 
     steps:
@@ -34,7 +35,7 @@ jobs:
 
   test-common:
     name: "Common Tests"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
 
     steps:
@@ -53,7 +54,7 @@ jobs:
 
   test-plugins:
     name: Plugins Runtime Linter & Tests
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
 
     steps:
@@ -103,7 +104,7 @@ jobs:
 
   test-frontend:
     name: "Frontend Tests"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
 
     steps:
@@ -124,7 +125,7 @@ jobs:
 
   test-render-wasm:
     name: "Render WASM Tests"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
 
     steps:
@@ -148,7 +149,7 @@ jobs:
 
   test-backend:
     name: "Backend Tests"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
 
     services:
@@ -187,7 +188,7 @@ jobs:
 
   test-library:
     name: "Library Tests"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
 
     steps:
@@ -201,7 +202,7 @@ jobs:
 
   build-integration:
     name: "Build Integration Bundle"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
 
     steps:
@@ -222,7 +223,7 @@ jobs:
 
   test-integration-1:
     name: "Integration Tests 1/4"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
     needs: build-integration
 
@@ -252,7 +253,7 @@ jobs:
 
   test-integration-2:
     name: "Integration Tests 2/4"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
     needs: build-integration
 
@@ -282,7 +283,7 @@ jobs:
 
   test-integration-3:
     name: "Integration Tests 3/4"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
     needs: build-integration
 
@@ -312,7 +313,7 @@ jobs:
 
   test-integration-4:
     name: "Integration Tests 4/4"
-    runs-on: penpot-runner-02
+    runs-on: ubuntu-latest
     container: penpotapp/devenv:latest
     needs: build-integration
 
