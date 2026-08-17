@@ -14,6 +14,8 @@ This DevEnv package is CI infrastructure only, not a production application rele
 
 PodConverge-specific tests should protect product and integration behavior rather than disposable upstream internals. Database migrations, immutable release artifacts, production-like staging, and a tested rollback path are mandatory release gates; these gates must be implemented and verified rather than assumed.
 
+Production Design Studio navigation messages may originate only from the exact production plugin origin `https://plugin.podconverge.com` or the exact developer plugin origin `https://plugin-develop.podconverge.com`. The developer plugin is developer-only, manually installed, and is not the default plugin. Sender trust does not bypass the connected `plugin-modal` iframe identity checks or the destination origin and path allowlists.
+
 Production must deploy prebuilt immutable images, not build release images during deployment. Deployment must not depend on pulling changes into the currently dirty production checkout.
 
 This CI work item does not authorize merging PR #15 or deploying it to production.
