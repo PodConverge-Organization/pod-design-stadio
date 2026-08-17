@@ -131,6 +131,8 @@
 (def ^:private production-design-studio-origin
   "https://design.podconverge.com")
 (def ^:private production-plugin-origin "https://plugin.podconverge.com")
+(def ^:private production-plugin-origins
+  #{production-plugin-origin "https://plugin-develop.podconverge.com"})
 (def ^:private local-plugin-origin "http://localhost:4403")
 (def ^:private local-design-studio-origins
   #{"http://localhost:3450" "https://localhost:3449"})
@@ -161,7 +163,7 @@
 (defn- approved-sender-origin?
   [environment origin]
   (case environment
-    :production (= origin production-plugin-origin)
+    :production (contains? production-plugin-origins origin)
     :local (or (= origin production-plugin-origin)
                (= origin local-plugin-origin))
     false))

@@ -9,6 +9,7 @@ const runtimePath = fileURLToPath(
 );
 const productionDesignOrigin = "https://design.podconverge.com";
 const productionPluginOrigin = "https://plugin.podconverge.com";
+const developerPluginOrigin = "https://plugin-develop.podconverge.com";
 const localPluginOrigin = "http://localhost:4403";
 const destinationOrigins = [
   "https://app.podconverge.com",
@@ -132,6 +133,30 @@ for (const [name, destination] of [
     expect(await popupPromise).toBe(false);
   });
 }
+
+test("developer plugin navigates an approved production destination", async ({
+  page,
+}) => {
+  await installBridge(page);
+  const pluginFrame = await addPluginModal(page, developerPluginOrigin);
+
+  await sendNavigation(
+    pluginFrame,
+    "https://app.podconverge.com/panel/orders?cart",
+  );
+  await expect(page).toHaveURL("https://app.podconverge.com/panel/orders?cart");
+});
+
+test("developer plugin cannot bypass production destination validation", async ({
+  page,
+}) => {
+  await installBridge(page);
+  const pluginFrame = await addPluginModal(page, developerPluginOrigin);
+
+  await expectIgnored(page, () =>
+    sendNavigation(pluginFrame, "https://app.podconverge.com/panel/admin"),
+  );
+});
 
 test("navigation bridge rejects untrusted senders", async ({ page }) => {
   await installBridge(page);
