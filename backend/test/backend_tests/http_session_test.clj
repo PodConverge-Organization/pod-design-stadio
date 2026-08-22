@@ -22,7 +22,7 @@
           cookie   (get-in response [::yres/cookies cname])]
       (t/is (= "/" (:path cookie)))
       (t/is (= "foobar" (:value cookie)))
-      (t/is (not (contains? cookie :domain)))))))
+      (t/is (not (contains? cookie :domain))))))
 
 (t/deftest session-cookie-with-configured-domain
   (with-redefs [app.config/config (assoc cf/config :auth-token-cookie-domain ".podconverge.com")]
@@ -34,7 +34,7 @@
           cookie   (get-in response [::yres/cookies cname])]
       (t/is (= "/" (:path cookie)))
       (t/is (= "foobar" (:value cookie)))
-      (t/is (= ".podconverge.com" (:domain cookie)))))))
+      (t/is (= ".podconverge.com" (:domain cookie))))))
 
 (t/deftest clear-session-cookie-with-configured-domain
   (with-redefs [app.config/config (assoc cf/config :auth-token-cookie-domain ".podconverge.com")]
