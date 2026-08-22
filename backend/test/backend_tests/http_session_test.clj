@@ -55,6 +55,16 @@
                      :modified-at (ct/now)})]
       (t/is (not (contains? (::yres/headers response) "set-cookie"))))))
 
+(t/deftest legacy-cookie-cleanup-without-canonical-domain
+  (with-redefs [app.config/config (-> cf/config
+                                      (dissoc :auth-token-cookie-domain)
+                                      (assoc :auth-token-legacy-cookie-domain "design.podconverge.com"))]
+    (let [response (#'session/assign-session-cookie
+                    {}
+                    {:token "foobar"
+                     :modified-at (ct/now)})]
+      (t/is (not (contains? (::yres/headers response) "set-cookie"))))))
+
 (t/deftest legacy-cookie-cleanup-enabled
   (with-redefs [app.config/config (-> cf/config
                                       (assoc :auth-token-cookie-domain ".podconverge.com")
@@ -67,6 +77,20 @@
           cookie   (get-in response [::yres/cookies cname])]
       (t/is (= ".podconverge.com" (:domain cookie)))
       (t/is (= ["other-cookie=other-value"
+                "auth-token=; Path=/; Max-Age=0; Domain=design.podconverge.com"]
+               (get-in response [::yres/headers "set-cookie"]))))))
+
+(t/deftest legacy-cookie-cleanup-appends-to-collection-header
+  (with-redefs [app.config/config (-> cf/config
+                                      (assoc :auth-token-cookie-domain ".podconverge.com")
+                                      (assoc :auth-token-legacy-cookie-domain "design.podconverge.com"))]
+    (let [response (#'session/assign-session-cookie
+                    {::yres/headers
+                     {"set-cookie" ["first-cookie=value" "second-cookie=value"]}}
+                    {:token "foobar"
+                     :modified-at (ct/now)})]
+      (t/is (= ["first-cookie=value"
+                "second-cookie=value"
                 "auth-token=; Path=/; Max-Age=0; Domain=design.podconverge.com"]
                (get-in response [::yres/headers "set-cookie"]))))))
 

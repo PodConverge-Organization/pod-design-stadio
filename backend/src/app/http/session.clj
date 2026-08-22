@@ -277,7 +277,8 @@
 
 (defn- append-legacy-cookie-cleanup
   [response]
-  (if-let [domain (cf/get :auth-token-legacy-cookie-domain)]
+  (if-let [domain (and (cf/get :auth-token-cookie-domain)
+                       (cf/get :auth-token-legacy-cookie-domain))]
     (let [cname  (cf/get :auth-token-cookie-name)
           cookie (str cname "=; Path=/; Max-Age=0; Domain=" domain)]
       (update-in response [::yres/headers "set-cookie"]
