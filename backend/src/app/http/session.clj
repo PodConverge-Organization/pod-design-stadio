@@ -285,20 +285,25 @@
         strict?    (contains? cf/flags :strict-session-cookies)
         cors?      (contains? cf/flags :cors)
         name       (cf/get :auth-token-cookie-name)
+        domain     (cf/get :auth-token-cookie-domain)
         comment    (str "Renewal at: " (ct/format-inst renewal :rfc1123))
-        cookie     {:path "/"
-                    :http-only true
-                    :expires expires
-                    :value token
-                    :comment comment
-                    :same-site (if cors? :none (if strict? :strict :lax))
-                    :secure secure?}]
+        cookie     (d/without-nils
+                    {:path "/"
+                     :domain domain
+                     :http-only true
+                     :expires expires
+                     :value token
+                     :comment comment
+                     :same-site (if cors? :none (if strict? :strict :lax))
+                     :secure secure?})]
     (update response ::yres/cookies assoc name cookie)))
 
 (defn- clear-session-cookie
   [response]
-  (let [cname (cf/get :auth-token-cookie-name)]
-    (update response ::yres/cookies assoc cname {:path "/" :value "" :max-age 0})))
+  (let [cname  (cf/get :auth-token-cookie-name)
+        domain (cf/get :auth-token-cookie-domain)
+        cookie (d/without-nils {:path "/" :domain domain :value "" :max-age 0})]
+    (update response ::yres/cookies assoc cname cookie)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TASK: SESSION GC

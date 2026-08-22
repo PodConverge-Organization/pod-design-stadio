@@ -7,6 +7,7 @@
 (ns backend-tests.http-middleware-test
   (:require
    [app.common.time :as ct]
+   [app.config :as cf]
    [app.db :as db]
    [app.http :as-alias http]
    [app.http.access-token]
@@ -136,3 +137,35 @@
     (t/is (= "penpot" (:aud claims)))
     (t/is (= (:id session) (:sid claims)))
     (t/is (= (:id profile) (:uid claims)))))
+
+(t/deftest session-cookie-without-configured-domain
+  (with-redefs [app.config/config (dissoc cf/config :auth-token-cookie-domain)]
+    (let [response (#'session/assign-session-cookie
+                    {}
+                    {:token "foobar"
+                     :modified-at (ct/now)})
+          cookie   (get-in response [::yres/cookies "auth-token"])]
+      (t/is (= "/" (:path cookie)))
+      (t/is (= "foobar" (:value cookie)))
+      (t/is (not (contains? cookie :domain)))))))
+
+(t/deftest session-cookie-with-configured-domain
+  (with-redefs [app.config/config (assoc cf/config :auth-token-cookie-domain ".podconverge.com")]
+    (let [response (#'session/assign-session-cookie
+                    {}
+                    {:token "foobar"
+                     :modified-at (ct/now)})
+          cookie   (get-in response [::yres/cookies "auth-token"])]
+      (t/is (= "/" (:path cookie)))
+      (t/is (= "foobar" (:value cookie)))
+      (t/is (= ".podconverge.com" (:domain cookie)))))))
+
+(t/deftest clear-session-cookie-with-configured-domain
+  (with-redefs [app.config/config (assoc cf/config :auth-token-cookie-domain ".podconverge.com")]
+    (let [response (#'session/clear-session-cookie {})
+          cookie   (get-in response [::yres/cookies "auth-token"])]
+      (t/is (= {:path "/"
+                :domain ".podconverge.com"
+                :value ""
+                :max-age 0}
+               cookie))))))

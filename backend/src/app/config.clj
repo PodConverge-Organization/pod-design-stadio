@@ -156,6 +156,7 @@
     [:quotes-team-access-requests-per-requester {:optional true} ::sm/int]
 
     [:auth-token-cookie-name {:optional true} :string]
+    [:auth-token-cookie-domain {:optional true} :string]
     [:auth-token-cookie-max-age {:optional true} ::ct/duration]
 
     [:registration-domain-whitelist {:optional true} [::sm/set :string]]
