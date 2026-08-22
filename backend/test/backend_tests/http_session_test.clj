@@ -46,3 +46,41 @@
                 :value ""
                 :max-age 0}
                cookie)))))
+
+(t/deftest legacy-cookie-cleanup-disabled
+  (with-redefs [app.config/config (dissoc cf/config :auth-token-legacy-cookie-domain)]
+    (let [response (#'session/assign-session-cookie
+                    {}
+                    {:token "foobar"
+                     :modified-at (ct/now)})]
+      (t/is (not (contains? (::yres/headers response) "set-cookie"))))))
+
+(t/deftest legacy-cookie-cleanup-enabled
+  (with-redefs [app.config/config (-> cf/config
+                                      (assoc :auth-token-cookie-domain ".podconverge.com")
+                                      (assoc :auth-token-legacy-cookie-domain "design.podconverge.com"))]
+    (let [cname    (cf/get :auth-token-cookie-name)
+          response (#'session/assign-session-cookie
+                    {::yres/headers {"set-cookie" "other-cookie=other-value"}}
+                    {:token "foobar"
+                     :modified-at (ct/now)})
+          cookie   (get-in response [::yres/cookies cname])]
+      (t/is (= ".podconverge.com" (:domain cookie)))
+      (t/is (= ["other-cookie=other-value"
+                "auth-token=; Path=/; Max-Age=0; Domain=design.podconverge.com"]
+               (get-in response [::yres/headers "set-cookie"]))))))
+
+(t/deftest clear-session-cookie-with-legacy-cookie-cleanup
+  (with-redefs [app.config/config (-> cf/config
+                                      (assoc :auth-token-cookie-domain ".podconverge.com")
+                                      (assoc :auth-token-legacy-cookie-domain "design.podconverge.com"))]
+    (let [cname    (cf/get :auth-token-cookie-name)
+          response (#'session/clear-session-cookie {})
+          cookie   (get-in response [::yres/cookies cname])]
+      (t/is (= {:path "/"
+                :domain ".podconverge.com"
+                :value ""
+                :max-age 0}
+               cookie))
+      (t/is (= ["auth-token=; Path=/; Max-Age=0; Domain=design.podconverge.com"]
+               (get-in response [::yres/headers "set-cookie"]))))))

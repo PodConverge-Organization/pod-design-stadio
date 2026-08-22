@@ -275,6 +275,19 @@
 
 ;; --- IMPL
 
+(defn- append-legacy-cookie-cleanup
+  [response]
+  (if-let [domain (cf/get :auth-token-legacy-cookie-domain)]
+    (let [cname  (cf/get :auth-token-cookie-name)
+          cookie (str cname "=; Path=/; Max-Age=0; Domain=" domain)]
+      (update-in response [::yres/headers "set-cookie"]
+                 (fn [values]
+                   (cond
+                     (nil? values) [cookie]
+                     (coll? values) (conj (vec values) cookie)
+                     :else [values cookie]))))
+    response))
+
 (defn- assign-session-cookie
   [response {token :token modified-at :modified-at}]
   (let [max-age    (cf/get :auth-token-cookie-max-age default-cookie-max-age)
@@ -296,14 +309,18 @@
                      :comment comment
                      :same-site (if cors? :none (if strict? :strict :lax))
                      :secure secure?})]
-    (update response ::yres/cookies assoc name cookie)))
+    (-> response
+        (update ::yres/cookies assoc name cookie)
+        (append-legacy-cookie-cleanup))))
 
 (defn- clear-session-cookie
   [response]
   (let [cname  (cf/get :auth-token-cookie-name)
         domain (cf/get :auth-token-cookie-domain)
         cookie (d/without-nils {:path "/" :domain domain :value "" :max-age 0})]
-    (update response ::yres/cookies assoc cname cookie)))
+    (-> response
+        (update ::yres/cookies assoc cname cookie)
+        (append-legacy-cookie-cleanup))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TASK: SESSION GC
