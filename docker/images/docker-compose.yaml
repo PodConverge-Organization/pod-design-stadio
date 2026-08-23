@@ -178,6 +178,9 @@ services:
       PENPOT_SMTP_TLS: false
       PENPOT_SMTP_SSL: false
 
+      PENPOT_AUTH_TOKEN_COOKIE_DOMAIN: .podconverge.com
+      PENPOT_AUTH_TOKEN_LEGACY_COOKIE_DOMAIN: design.podconverge.com
+
   penpot-exporter:
     image: "penpotapp/exporter:${PENPOT_VERSION:-latest}"
     restart: always
