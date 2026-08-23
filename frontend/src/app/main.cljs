@@ -111,7 +111,7 @@
                    (rx/of (dsr/redirect-to-recovery (:href decision)))
 
                    :fail-closed
-                   (rx/of (router/assign-exception (:error decision)))))))
+                   (rx/of (router/assign-exception (:error decision))))))))
 
        ;; Once profile fetched and the current user is authenticated,
        ;; proceed to initialize the websockets connection.
