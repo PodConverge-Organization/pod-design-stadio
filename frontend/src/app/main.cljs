@@ -12,12 +12,14 @@
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.main.data.auth :as da]
+   [app.main.data.design-studio-session-recovery :as dsr]
    [app.main.data.event :as ev]
    [app.main.data.profile :as dp]
    [app.main.data.websocket :as ws]
    [app.main.errors]
    [app.main.features :as feat]
    [app.main.rasterizer :as thr]
+   [app.main.router :as router]
    [app.main.store :as st]
    [app.main.ui :as ui]
    [app.main.ui.alert]
@@ -77,12 +79,39 @@
             (rx/filter dp/profile-deleted-event?)
             (rx/map da/logged-out))
 
+       ;; Clear a previous recovery attempt as soon as the Design
+       ;; Studio profile is authenticated again.
+       (->> stream
+            (rx/filter dp/profile-fetched?)
+            (rx/map deref)
+            (rx/filter dp/is-authenticated?)
+            (rx/map (fn [_] (dsr/clear-recovery-guard))))
+
        ;; Once profile is fetched, initialize all penpot application
-       ;; routes
+       ;; routes, unless an anonymous protected route needs external
+       ;; Design Studio session recovery.
        (->> stream
             (rx/filter dp/profile-fetched?)
             (rx/take 1)
-            (rx/map #(rt/init-routes)))
+            (rx/map deref)
+            (rx/mapcat
+             (fn [profile]
+               (let [decision (dsr/current-startup-decision
+                               profile
+                               (rt/current-route-name)
+                               (router/get-current-href))]
+                 (case (:type decision)
+                   :continue
+                   (if (:clear-guard? decision)
+                     (rx/of (dsr/clear-recovery-guard)
+                            (rt/init-routes))
+                     (rx/of (rt/init-routes)))
+
+                   :recover
+                   (rx/of (dsr/redirect-to-recovery (:href decision)))
+
+                   :fail-closed
+                   (rx/of (router/assign-exception (:error decision)))))))
 
        ;; Once profile fetched and the current user is authenticated,
        ;; proceed to initialize the websockets connection.

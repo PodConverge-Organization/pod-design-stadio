@@ -108,6 +108,7 @@ services:
 
     environment:
       << : [*penpot-flags, *penpot-http-body-size]
+      PENPOT_DESIGN_STUDIO_RECOVERY_URI: ${PENPOT_DESIGN_STUDIO_RECOVERY_URI:-}
 
   penpot-backend:
     image: "penpotapp/backend:${PENPOT_VERSION:-latest}"

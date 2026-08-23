@@ -21,7 +21,23 @@ update_flags() {
   fi
 }
 
+escape_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[|&\\]/\\&/g' -e 's/"/\\"/g'
+}
+
+update_design_studio_recovery_uri() {
+  if [ -n "$PENPOT_DESIGN_STUDIO_RECOVERY_URI" ]; then
+    local value
+    value="$(escape_sed_replacement "$PENPOT_DESIGN_STUDIO_RECOVERY_URI")"
+
+    echo "$(sed \
+      -e "s|^//var penpotDesignStudioRecoveryURI = .*;|var penpotDesignStudioRecoveryURI = \"$value\";|g" \
+      "$1")" > "$1"
+  fi
+}
+
 update_flags /var/www/app/js/config.js
+update_design_studio_recovery_uri /var/www/app/js/config.js
 
 #########################################
 ## Nginx Config

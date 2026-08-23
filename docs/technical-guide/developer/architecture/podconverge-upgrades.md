@@ -16,6 +16,16 @@ PodConverge-specific tests should protect product and integration behavior rathe
 
 Production Design Studio navigation messages may originate only from the exact production plugin origin `https://plugin.podconverge.com` or the exact developer plugin origin `https://plugin-develop.podconverge.com`. The developer plugin is developer-only, manually installed, and is not the default plugin. Sender trust does not bypass the connected `plugin-modal` iframe identity checks or the destination origin and path allowlists.
 
+## Design Studio session recovery
+
+Design Studio uses `PENPOT_DESIGN_STUDIO_RECOVERY_URI` as runtime frontend configuration for protected-route session recovery. The expected production endpoint is `https://app.podconverge.com/auth/design-studio/recover`, but this value must flow through `/js/config.js` and must not be compiled or hardcoded into ClojureScript application logic.
+
+The protected route families are workspace, dashboard, and settings routes, matched by route identity rather than browser URL substring checks. Anonymous `/view` and `/view/:file-id` routes remain compatible with share-link viewing and must not trigger automatic recovery.
+
+When recovery is allowed, Design Studio redirects to the configured Pod frontend bridge with `returnTo` set to the exact current Design Studio `window.location.href`, including query parameters and hash fragments. The Pod frontend bridge owns Pod login, Design Studio session reissue, and final redirect back to the exact validated `returnTo`; Design Studio must not duplicate backend reissue logic.
+
+Recovery is bounded by a one-attempt-per-tab `sessionStorage` guard. The guard is written synchronously immediately before the external redirect, cleared after a later authenticated profile result, and prevents repeated redirects while the Design Studio session remains invalid. Missing or invalid recovery configuration fails closed to a local authentication/recovery error state without external redirect.
+
 Production must deploy prebuilt immutable images, not build release images during deployment. Deployment must not depend on pulling changes into the currently dirty production checkout.
 
 This CI work item does not authorize merging PR #15 or deploying it to production.

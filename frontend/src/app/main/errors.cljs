@@ -11,6 +11,7 @@
    [app.common.pprint :as pp]
    [app.config :as cf]
    [app.main.data.auth :as da]
+   [app.main.data.design-studio-session-recovery :as dsr]
    [app.main.data.event :as ev]
    [app.main.data.modal :as modal]
    [app.main.data.notifications :as ntf]
@@ -116,24 +117,24 @@
       (ex/print-throwable cause :prefix "Unexpected Error")
       (show-not-blocking-error cause))))
 
-;; We receive a explicit authentication error; If the uri is for
-;; workspace, dashboard, viewer or settings, then assign the exception
-;; for show the error page. Otherwise this explicitly clears all
-;; profile data and redirect the user to the login page. This is here
-;; and not in app.main.errors because of circular dependency.
+;; We receive an explicit authentication error. Protected PodConverge
+;; Design Studio routes attempt bounded external session recovery;
+;; viewer routes keep local error behavior; all other routes preserve
+;; the existing logout flow.
 (defmethod ptk/handle-error :authentication
   [error]
   (let [message (tr "errors.auth.unable-to-login")
-        uri     (rt/get-current-href)
+        decision (dsr/current-authentication-error-decision
+                  (rt/lookup-name @st/state)
+                  (rt/get-current-href))]
+    (case (:type decision)
+      :recover
+      (st/async-emit! (dsr/redirect-to-recovery (:href decision)))
 
-        show-error?
-        (or (str/includes? uri "workspace")
-            (str/includes? uri "dashboard")
-            (str/includes? uri "view")
-            (str/includes? uri "settings"))]
+      (:local-exception :fail-closed)
+      (st/async-emit! (rt/assign-exception (or (:error decision) error)))
 
-    (if show-error?
-      (st/async-emit! (rt/assign-exception error))
+      :logout
       (do
         (st/emit! (da/logout))
         (ts/schedule 500 #(st/emit! (ntf/warn message)))))))
@@ -347,4 +348,3 @@
     (fn []
       (.removeEventListener g/window "error" on-unhandled-error)
       (.removeEventListener g/window "unhandledrejection" on-unhandled-rejection))))
-

@@ -83,6 +83,16 @@
    ["/workspace/:project-id/:file-id" :workspace-legacy]])
 
 
+(defn route-name-for-path
+  [path]
+  (some-> (rt/create routes)
+          (rt/match path)
+          (dm/get-in [:data :name])))
+
+(defn current-route-name
+  []
+  (route-name-for-path (rt/get-current-path)))
+
 (defn- store-session-params
   [{:keys [template plugin]}]
   (binding [storage/*sync* true]

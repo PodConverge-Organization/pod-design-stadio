@@ -4,6 +4,7 @@
    [frontend-tests.basic-shapes-test]
    [frontend-tests.data.workspace-colors-test]
    [frontend-tests.data.workspace-text-defaults-test]
+   [frontend-tests.design-studio-session-recovery-test]
    [frontend-tests.helpers-shapes-test]
    [frontend-tests.inspect-code-boundary-test]
    [frontend-tests.logic.comp-remove-swap-slots-test]
@@ -39,6 +40,7 @@
    'frontend-tests.basic-shapes-test
    'frontend-tests.data.workspace-colors-test
    'frontend-tests.data.workspace-text-defaults-test
+   'frontend-tests.design-studio-session-recovery-test
    'frontend-tests.helpers-shapes-test
    'frontend-tests.inspect-code-boundary-test
    'frontend-tests.logic.comp-remove-swap-slots-test
