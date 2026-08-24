@@ -9,6 +9,7 @@
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.files.helpers :as cfh]
+   [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [clojure.string :as str]
@@ -70,14 +71,18 @@
    (process-selected objects selected nil))
 
   ([objects selected {:keys [omit-blocked?] :or {omit-blocked? false}}]
-   (letfn [(selectable? [id]
-             (and (contains? objects id)
-                  (or (not omit-blocked?)
-                      (not (dm/get-in objects [id :blocked] false)))))]
-     (let [selected (->> selected (cfh/clean-loops objects))]
-       (into (d/ordered-set)
-             (filter selectable?)
-             selected)))))
+   (let [selectable?
+         (fn [id]
+           (and (contains? objects id)
+                (or (not omit-blocked?)
+                    (not (dm/get-in objects [id :blocked] false)))))
+
+         selected
+         (cfh/clean-loops objects selected)]
+
+     (into (d/ordered-set)
+           (filter selectable?)
+           selected))))
 
 (defn split-text-shapes
   "Split text shapes from non-text shapes"
@@ -427,3 +432,12 @@
                  (let [shape (get objects id)]
                    (and shape (shape-is-protected-print-area? shape objects)))))
        (into [])))
+
+(defn get-selrect
+  [selrect-transform shape]
+  (if (some? selrect-transform)
+    (let [{:keys [center width height transform]} selrect-transform]
+      [(gsh/center->rect center width height)
+       (gmt/transform-in center transform)])
+    [(dm/get-prop shape :selrect)
+     (gsh/transform-matrix shape)]))

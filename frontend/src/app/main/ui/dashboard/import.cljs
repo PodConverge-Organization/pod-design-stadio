@@ -9,16 +9,16 @@
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
+   [app.common.exceptions :as ex]
    [app.common.logging :as log]
    [app.main.data.dashboard :as dd]
    [app.main.data.event :as ev]
    [app.main.data.modal :as modal]
    [app.main.data.notifications :as ntf]
-   [app.main.errors :as errors]
    [app.main.store :as st]
-   [app.main.ui.components.file-uploader :refer [file-uploader]]
+   [app.main.ui.components.file-uploader :refer [file-uploader*]]
    [app.main.ui.ds.product.loader :refer [loader*]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.main.ui.notifications.context-notification :refer [context-notification]]
    [app.main.worker :as mw]
    [app.util.dom :as dom]
@@ -58,10 +58,10 @@
   [{:keys [project-id on-finish-import]} external-ref]
   (let [on-file-selected (use-import-file project-id on-finish-import)]
     [:form.import-file {:aria-hidden "true"}
-     [:& file-uploader {:accept ".penpot,.zip"
-                        :multi true
-                        :ref external-ref
-                        :on-selected on-file-selected}]]))
+     [:> file-uploader* {:accept ".penpot,.zip"
+                         :multi true
+                         :ref external-ref
+                         :on-selected on-file-selected}]]))
 
 (defn- update-entry-name
   [entries file-id new-name]
@@ -260,10 +260,10 @@
                        :file-icon true
                        :icon-fill import-ready?)}
          (cond
-           import-ready?   i/logo-icon
-           import-error?   i/close
-           import-success? i/tick
-           analyze-error?  i/close)])
+           import-ready?   deprecated-icon/logo-icon
+           import-error?   deprecated-icon/close
+           import-success? deprecated-icon/tick
+           analyze-error?  deprecated-icon/close)])
 
       (if editing?
         [:div {:class (stl/css :file-name-edit)}
@@ -277,13 +277,13 @@
          (:name entry)
          (when ^boolean is-shared?
            [:span {:class (stl/css :icon)}
-            i/library])])
+            deprecated-icon/library])])
 
       [:div {:class (stl/css :edit-entry-buttons)}
        (when ^boolean editable?
-         [:button {:on-click on-edit'} i/curve])
+         [:button {:on-click on-edit'} deprecated-icon/curve])
        (when ^boolean can-be-deleted
-         [:button {:on-click on-delete'} i/delete])]]
+         [:button {:on-click on-delete'} deprecated-icon/delete])]]
 
      (cond
        analyze-error?
@@ -312,7 +312,7 @@
              [:span {:class (stl/css-case
                              :linked-library-tag true
                              :error error?)}
-              i/detach]])))]]))
+              deprecated-icon/detach]])))]]))
 
 (defn initialize-state
   [entries]
@@ -360,7 +360,7 @@
                  on-error
                  (fn [cause]
                    (reset! status* :error)
-                   (errors/print-error! cause)
+                   (ex/print-throwable cause)
                    (rx/of (modal/hide)
                           (ntf/error (tr "dashboard.libraries-and-templates.import-error"))))
 
@@ -464,7 +464,7 @@
        [:h2  {:class (stl/css :modal-title)} (tr "dashboard.import")]
 
        [:button {:class (stl/css :modal-close-btn)
-                 :on-click on-cancel} i/close]]
+                 :on-click on-cancel} deprecated-icon/close]]
 
       [:div {:class (stl/css :modal-content)}
        (when (and (= :analyze status) errors?)

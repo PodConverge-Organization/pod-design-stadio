@@ -47,9 +47,12 @@
                 (-> (ctob/make-tokens-lib)
                     (ctob/add-theme (ctob/make-token-theme :name "Theme A" :sets #{"Set A"}))
                     (ctob/set-active-themes #{"/Theme A"})
-                    (ctob/add-set (ctob/make-token-set :name "Set A"))
-                    (ctob/add-token-in-set "Set A" (ctob/make-token border-radius-token))
-                    (ctob/add-token-in-set "Set A" (ctob/make-token reference-border-radius-token))))))
+                    (ctob/add-set (ctob/make-token-set :id (cthi/new-id! :set-a)
+                                                       :name "Set A"))
+                    (ctob/add-token (cthi/id :set-a)
+                                    (ctob/make-token border-radius-token))
+                    (ctob/add-token (cthi/id :set-a)
+                                    (ctob/make-token reference-border-radius-token))))))
 
 (t/deftest test-apply-token
   (t/testing "applies token to shape and updates shape attributes to resolved value"
@@ -115,9 +118,9 @@
                                        :token (toht/get-token file "borderRadius.sm")
                                        :shape-ids [(:id rect-1)]
                                        :on-update-shape dwta/update-shape-radius-all})
-                   ;; Apply single `:r1` attribute to same shape
-                   ;; while removing other attributes from the border-radius set
-                   ;; but keep `:r4` for testing purposes
+                    ;; Apply single `:r1` attribute to same shape
+                    ;; while removing other attributes from the border-radius set
+                    ;; but keep `:r4` for testing purposes
                     (dwta/apply-token {:attributes #{:r1 :r2 :r3}
                                        :token (toht/get-token file "borderRadius.md")
                                        :shape-ids [(:id rect-1)]
@@ -190,8 +193,10 @@
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
                                 #(-> %
-                                     (ctob/add-token-in-set "Set A" (ctob/make-token color-token))
-                                     (ctob/add-token-in-set "Set A" (ctob/make-token color-alpha-token)))))
+                                     (ctob/add-token (cthi/id :set-a)
+                                                     (ctob/make-token color-token))
+                                     (ctob/add-token (cthi/id :set-a)
+                                                     (ctob/make-token color-alpha-token)))))
             store (ths/setup-store file)
             rect-1 (cths/get-shape file :rect-1)
             rect-2 (cths/get-shape file :rect-2)
@@ -248,13 +253,14 @@
                               :type :dimensions}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token dimensions-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token dimensions-token))))
             store (ths/setup-store file)
             rect-1 (cths/get-shape file :rect-1)
             events [(dwta/apply-token {:shape-ids [(:id rect-1)]
                                        :attributes #{:width :height}
                                        :token (toht/get-token file "dimensions.sm")
-                                       :on-update-shape dwta/update-shape-dimensions})]]
+                                       :on-update-shape dwta/apply-dimensions-token})]]
         (tohs/run-store-async
          store done events
          (fn [new-state]
@@ -280,7 +286,8 @@
                      (ctho/add-frame :frame-1)
                      (ctho/add-frame :frame-2 {:layout :grid})
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token spacing-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token spacing-token))))
             store (ths/setup-store file)
             frame-1 (cths/get-shape file :frame-1)
             frame-2 (cths/get-shape file :frame-2)
@@ -296,10 +303,10 @@
                  frame-1' (cths/get-shape file' :frame-1)
                  frame-2' (cths/get-shape file' :frame-2)]
              (t/testing "shape `:applied-tokens` got updated"
-               (t/is (= (:p1 (:applied-tokens frame-1')) (:name token-target')))
-               (t/is (= (:p2 (:applied-tokens frame-1')) (:name token-target')))
-               (t/is (= (:p3 (:applied-tokens frame-1')) (:name token-target')))
-               (t/is (= (:p4 (:applied-tokens frame-1')) (:name token-target')))
+               (t/is (= (:p1 (:applied-tokens frame-1')) nil))
+               (t/is (= (:p2 (:applied-tokens frame-1')) nil))
+               (t/is (= (:p3 (:applied-tokens frame-1')) nil))
+               (t/is (= (:p4 (:applied-tokens frame-1')) nil))
 
                (t/is (= (:p1 (:applied-tokens frame-2')) (:name token-target')))
                (t/is (= (:p2 (:applied-tokens frame-2')) (:name token-target')))
@@ -319,13 +326,14 @@
                           :type :sizing}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token sizing-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token sizing-token))))
             store (ths/setup-store file)
             rect-1 (cths/get-shape file :rect-1)
             events [(dwta/apply-token {:shape-ids [(:id rect-1)]
                                        :attributes #{:width :height}
                                        :token (toht/get-token file "sizing.sm")
-                                       :on-update-shape dwta/update-shape-dimensions})]]
+                                       :on-update-shape dwta/apply-dimensions-token})]]
         (tohs/run-store-async
          store done events
          (fn [new-state]
@@ -356,9 +364,12 @@
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
                                 #(-> %
-                                     (ctob/add-token-in-set "Set A" (ctob/make-token opacity-float))
-                                     (ctob/add-token-in-set "Set A" (ctob/make-token opacity-percent))
-                                     (ctob/add-token-in-set "Set A" (ctob/make-token opacity-invalid)))))
+                                     (ctob/add-token (cthi/id :set-a)
+                                                     (ctob/make-token opacity-float))
+                                     (ctob/add-token (cthi/id :set-a)
+                                                     (ctob/make-token opacity-percent))
+                                     (ctob/add-token (cthi/id :set-a)
+                                                     (ctob/make-token opacity-invalid)))))
             store (ths/setup-store file)
             rect-1 (cths/get-shape file :rect-1)
             rect-2 (cths/get-shape file :rect-2)
@@ -404,7 +415,8 @@
                             :type :rotation}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token rotation-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token rotation-token))))
             store (ths/setup-store file)
             rect-1 (cths/get-shape file :rect-1)
             events [(dwta/apply-token {:shape-ids [(:id rect-1)]
@@ -434,7 +446,8 @@
                                                                   :stroke-opacity 1,
                                                                   :stroke-width 5}]}})
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token stroke-width-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token stroke-width-token))))
             store (ths/setup-store file)
             rect-with-stroke (cths/get-shape file :rect-1)
             rect-without-stroke (cths/get-shape file :rect-2)
@@ -456,6 +469,44 @@
                (t/is (= (:stroke-width (:applied-tokens rect-without-stroke')) (:name token-target')))
                (t/is (= (get-in rect-without-stroke' [:strokes 0 :stroke-width]) 10))))))))))
 
+(t/deftest test-apply-shadow
+  (t/testing "applies shadow token and updates the shapes with shadow"
+    (t/async
+      done
+      (let [shadow-token {:name "shadow.sm"
+                          :value [{:offset-x 10
+                                   :offset-y 10
+                                   :blur 10
+                                   :spread 10
+                                   :color "rgba(0,0,0,0.5)"
+                                   :inset false}]
+                          :type :shadow}
+            file (-> (setup-file-with-tokens)
+                     (update-in [:data :tokens-lib]
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token shadow-token))))
+            store (ths/setup-store file)
+            rect-1 (cths/get-shape file :rect-1)
+            events [(dwta/apply-token {:shape-ids [(:id rect-1)]
+                                       :attributes #{:shadow}
+                                       :token (toht/get-token file "shadow.sm")
+                                       :on-update-shape dwta/update-shadow})]]
+        (tohs/run-store-async
+         store done events
+         (fn [new-state]
+           (let [file' (ths/get-file-from-state new-state)
+                 token-target' (toht/get-token file' "shadow.sm")
+                 rect-1' (cths/get-shape file' :rect-1)
+                 shadow (first (:shadow rect-1'))]
+             (t/testing "token got applied to rect with shadow and shape shadow got updated"
+               (t/is (= (:shadow (:applied-tokens rect-1')) (:name token-target')))
+               (t/is (= (:offset-x shadow) 10))
+               (t/is (= (:offset-y shadow) 10))
+               (t/is (= (:blur shadow) 10))
+               (t/is (= (:spread shadow) 10))
+               (t/is (= (get-in shadow [:color :color]) "#000000"))
+               (t/is (= (get-in shadow [:color :opacity]) 0.5))))))))))
+
 (t/deftest test-apply-font-size
   (t/testing "applies font-size token and updates the text font-size"
     (t/async
@@ -465,7 +516,8 @@
                              :type :font-size}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token font-size-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token font-size-token))))
             store (ths/setup-store file)
             text-1 (cths/get-shape file :text-1)
             events [(dwta/apply-token {:shape-ids [(:id text-1)]
@@ -499,7 +551,8 @@
                                :type :number}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token line-height-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token line-height-token))))
             store (ths/setup-store file)
             text-1 (cths/get-shape file :text-1)
             events [(dwta/apply-token {:shape-ids [(:id text-1)]
@@ -533,7 +586,8 @@
                                   :type :letter-spacing}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token letter-spacing-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token letter-spacing-token))))
             store (ths/setup-store file)
             text-1 (cths/get-shape file :text-1)
             events [(dwta/apply-token {:shape-ids [(:id text-1)]
@@ -567,7 +621,8 @@
                                :type :font-family}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token font-family-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token font-family-token))))
             store (ths/setup-store file)
             text-1 (cths/get-shape file :text-1)
             events [(dwta/apply-token {:shape-ids [(:id text-1)]
@@ -601,7 +656,8 @@
                              :type :text-case}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token text-case-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token text-case-token))))
             store (ths/setup-store file)
             text-1 (cths/get-shape file :text-1)
             events [(dwta/apply-token {:shape-ids [(:id text-1)]
@@ -635,7 +691,8 @@
                                    :type :text-decoration}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token text-decoration-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token text-decoration-token))))
             store (ths/setup-store file)
             text-1 (cths/get-shape file :text-1)
             events [(dwta/apply-token {:shape-ids [(:id text-1)]
@@ -669,7 +726,8 @@
                                :type :font-weight}
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token font-weight-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token font-weight-token))))
             store (ths/setup-store file)
             text-1 (cths/get-shape file :text-1)
             events [(dwta/apply-token {:shape-ids [(:id text-1)]
@@ -702,7 +760,7 @@
             store (ths/setup-store file)
             rect-1 (cths/get-shape file :rect-1)
             rect-2 (cths/get-shape file :rect-2)
-            events [(dwta/toggle-token {:shapes [rect-1 rect-2]
+            events [(dwta/toggle-token {:shape-ids [(:id rect-1) (:id rect-2)]
                                         :token-type-props {:attributes #{:r1 :r2 :r3 :r4}
                                                            :on-update-shape dwta/update-shape-radius-all}
                                         :token (toht/get-token file "borderRadius.md")})]]
@@ -733,7 +791,7 @@
             rect-without-token (cths/get-shape file :rect-2)
             rect-with-other-token (cths/get-shape file :rect-3)
 
-            events [(dwta/toggle-token {:shapes [rect-with-token rect-without-token rect-with-other-token]
+            events [(dwta/toggle-token {:shape-ids [(:id rect-with-token) (:id rect-without-token) (:id rect-with-other-token)]
                                         :token (toht/get-token file "borderRadius.sm")
                                         :token-type-props {:attributes #{:r1 :r2 :r3 :r4}}})]]
         (tohs/run-store-async
@@ -766,7 +824,7 @@
             rect-without-token (cths/get-shape file :rect-2)
             rect-with-other-token-2 (cths/get-shape file :rect-3)
 
-            events [(dwta/toggle-token {:shapes [rect-with-other-token-1 rect-without-token rect-with-other-token-2]
+            events [(dwta/toggle-token {:shape-ids [(:id rect-with-other-token-1) (:id rect-without-token) (:id rect-with-other-token-2)]
                                         :token (toht/get-token file "borderRadius.sm")
                                         :token-type-props {:attributes #{:r1 :r2 :r3 :r4}}})]]
         (tohs/run-store-async
@@ -795,13 +853,14 @@
                                                 {:frame-params {:layout :grid}})
                      (ctho/add-rect :rect-regular)
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token spacing-token))))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token spacing-token))))
             store (ths/setup-store file)
             frame-layout (cths/get-shape file :frame-layout)
             rect-in-layout (cths/get-shape file :rect-in-layout)
             rect-regular (cths/get-shape file :rect-regular)
             events [(dwta/toggle-token {:token (toht/get-token file "spacing.md")
-                                        :shapes [frame-layout rect-in-layout rect-regular]})]]
+                                        :shape-ids [(:id frame-layout) (:id rect-in-layout) (:id rect-regular)]})]]
         (tohs/run-store-async
          store done events
          (fn [new-state]
@@ -838,7 +897,8 @@
             file (setup-file-with-tokens)
             file (-> file
                      (update-in [:data :tokens-lib]
-                                #(ctob/add-token-in-set % "Set A" (ctob/make-token color-token)))
+                                #(ctob/add-token % (cthi/id :set-a)
+                                                 (ctob/make-token color-token)))
                      (cths/add-sample-library-color :color1 {:name "Test color"
                                                              :color "#abcdef"})
                      (cths/update-shape :rect-1 :fills
@@ -860,6 +920,174 @@
              (t/is (nil? (:fill-color-ref-id fill)))
              (t/is (nil? (:fill-color-ref-file fill))))))))))
 
+(t/deftest test-apply-typography-token
+  (t/testing "applies typography (composite) tokens"
+    (t/async
+      done
+      (let [font-size-token {:name "font-size-reference"
+                             :value "100px"
+                             :type :font-size}
+            font-family-token {:name "font-family-reference"
+                               :value ["Arial" "sans-serif"]
+                               :type :font-family}
+            typography-token {:name "typography.heading"
+                              :value {:font-size "24px"
+                                      :font-weight "bold"
+                                      :font-family [(:font-id txt/default-text-attrs) "Arial" "sans-serif"]
+                                      :line-height "24px"
+                                      :letter-spacing "2"
+                                      :text-case "uppercase"
+                                      :text-decoration "underline"}
+                              :type :typography}
+            file (-> (setup-file-with-tokens)
+                     (update-in [:data :tokens-lib]
+                                #(-> %
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token font-size-token))
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token font-family-token))
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token typography-token)))))
+            store (ths/setup-store file)
+            text-1 (cths/get-shape file :text-1)
+            events [(dwta/apply-token {:shape-ids [(:id text-1)]
+                                       :attributes #{:typography}
+                                       :token (toht/get-token file "typography.heading")
+                                       :on-update-shape dwta/update-typography})]]
+        (tohs/run-store-async
+         store done events
+         (fn [new-state]
+           (let [file' (ths/get-file-from-state new-state)
+                 text-1' (cths/get-shape file' :text-1)
+                 style-text-blocks (->> (:content text-1')
+                                        (txt/content->text+styles)
+                                        (remove (fn [[_ text]] (str/empty? (str/trim text))))
+                                        (mapv (fn [[style text]]
+                                                {:styles (merge txt/default-text-attrs style)
+                                                 :text-content text}))
+                                        (first)
+                                        (:styles))]
+             (t/is (some? (:applied-tokens text-1')))
+             (t/is (= (:typography (:applied-tokens text-1')) "typography.heading"))
+
+             (t/is (= (:font-size style-text-blocks) "24"))
+             (t/is (= (:font-weight style-text-blocks) "700"))
+             (t/is (= (:line-height style-text-blocks) 1))
+             (t/is (= (:font-family style-text-blocks) "sourcesanspro"))
+             (t/is (= (:letter-spacing style-text-blocks) "2"))
+             (t/is (= (:text-transform style-text-blocks) "uppercase"))
+             (t/is (= (:text-decoration style-text-blocks) "underline")))))))))
+
+(t/deftest test-apply-reference-typography-token
+  (t/testing "applies typography (composite) tokens with references"
+    (t/async
+      done
+      (let [font-size-token {:name "fontSize"
+                             :value "100px"
+                             :type :font-size}
+            font-family-token {:name "fontFamily"
+                               :value ["Arial" "sans-serif"]
+                               :type :font-family}
+            typography-token {:name "typography"
+                              :value {:font-size "{fontSize}"
+                                      :font-family ["{fontFamily}"]}
+                              :type :typography}
+            file (-> (setup-file-with-tokens)
+                     (update-in [:data :tokens-lib]
+                                #(-> %
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token font-size-token))
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token font-family-token))
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token typography-token)))))
+            store (ths/setup-store file)
+            text-1 (cths/get-shape file :text-1)
+            events [(dwta/apply-token {:shape-ids [(:id text-1)]
+                                       :attributes #{:typography}
+                                       :token (toht/get-token file "typography")
+                                       :on-update-shape dwta/update-typography})]]
+        (tohs/run-store-async
+         store done events
+         (fn [new-state]
+           (let [file' (ths/get-file-from-state new-state)
+                 text-1' (cths/get-shape file' :text-1)
+                 style-text-blocks (->> (:content text-1')
+                                        (txt/content->text+styles)
+                                        (remove (fn [[_ text]] (str/empty? (str/trim text))))
+                                        (mapv (fn [[style text]]
+                                                {:styles (merge txt/default-text-attrs style)
+                                                 :text-content text}))
+                                        (first)
+                                        (:styles))]
+             (t/is (some? (:applied-tokens text-1')))
+             (t/is (= (:typography (:applied-tokens text-1')) "typography"))
+
+             (t/is (= (:font-size style-text-blocks) "100"))
+             (t/is (= (:font-family style-text-blocks) "Arial")))))))))
+
+(t/deftest test-unapply-atomic-tokens-on-composite-apply
+  (t/testing "unapplies atomic typography tokens when applying composite token"
+    (t/async
+      done
+      (let [font-size-token {:name "fontSize"
+                             :value "100px"
+                             :type :font-size}
+            typography-token {:name "typography"
+                              :value {}
+                              :type :typography}
+            file (-> (setup-file-with-tokens)
+                     (update-in [:data :tokens-lib]
+                                #(-> %
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token font-size-token))
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token typography-token)))))
+            store (ths/setup-store file)
+            text-1 (cths/get-shape file :text-1)
+            events [(dwta/apply-token {:shape-ids [(:id text-1)]
+                                       :attributes #{:typography}
+                                       :token (toht/get-token file "fontSize")})
+                    (dwta/apply-token {:shape-ids [(:id text-1)]
+                                       :attributes #{:typography}
+                                       :token (toht/get-token file "typography")
+                                       :on-update-shape dwta/update-typography})]]
+        (tohs/run-store-async
+         store done events
+         (fn [new-state]
+           (let [file' (ths/get-file-from-state new-state)
+                 text-1' (cths/get-shape file' :text-1)]
+             (t/is (some? (:applied-tokens text-1')))
+             (t/is (= (:typography (:applied-tokens text-1')) "typography"))
+             (t/is (nil? (:font-size (:applied-tokens text-1')))))))))))
+
+
+(t/deftest test-unapply-composite-tokens-on-atomic-apply
+  (t/testing "unapplies composite typography tokens when applying atomic token"
+    (t/async
+      done
+      (let [font-size-token {:name "fontSize"
+                             :value "100px"
+                             :type :font-size}
+            typography-token {:name "typography"
+                              :value {}
+                              :type :typography}
+            file (-> (setup-file-with-tokens)
+                     (update-in [:data :tokens-lib]
+                                #(-> %
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token font-size-token))
+                                     (ctob/add-token (cthi/id :set-a) (ctob/make-token typography-token)))))
+            store (ths/setup-store file)
+            text-1 (cths/get-shape file :text-1)
+            events [(dwta/apply-token {:shape-ids [(:id text-1)]
+                                       :attributes #{:typography}
+                                       :token (toht/get-token file "typography")
+                                       :on-update-shape dwta/update-typography})
+                    (dwta/apply-token {:shape-ids [(:id text-1)]
+                                       :attributes #{:font-size}
+                                       :token (toht/get-token file "fontSize")
+                                       :on-update-shape dwta/update-font-size})]]
+        (tohs/run-store-async
+         store done events
+         (fn [new-state]
+           (let [file' (ths/get-file-from-state new-state)
+                 text-1' (cths/get-shape file' :text-1)]
+             (t/is (some? (:applied-tokens text-1')))
+             (t/is (= (:font-size (:applied-tokens text-1')) "fontSize"))
+             (t/is (nil? (:typography (:applied-tokens text-1')))))))))))
+
 (t/deftest test-detach-styles-typography
   (t/testing "applying any typography token to a shape with a typography style should detach the style"
     (t/async
@@ -876,9 +1104,12 @@
             file (-> (setup-file-with-tokens)
                      (update-in [:data :tokens-lib]
                                 #(-> %
-                                     (ctob/add-token-in-set "Set A" (ctob/make-token font-size-token))
-                                     (ctob/add-token-in-set "Set A" (ctob/make-token line-height-token))
-                                     (ctob/add-token-in-set "Set A" (ctob/make-token letter-spacing-token))))
+                                     (ctob/add-token (cthi/id :set-a)
+                                                     (ctob/make-token font-size-token))
+                                     (ctob/add-token (cthi/id :set-a)
+                                                     (ctob/make-token line-height-token))
+                                     (ctob/add-token (cthi/id :set-a)
+                                                     (ctob/make-token letter-spacing-token))))
                      (cths/add-sample-typography :typography1 {:name "Test typography"}))
             content {:type "root"
                      :children [{:type "paragraph-set"

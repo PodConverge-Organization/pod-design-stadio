@@ -13,10 +13,11 @@
    [app.main.refs :as refs]
    [app.main.ui.components.dropdown-menu :refer [dropdown-menu*
                                                  dropdown-menu-item*]]
-   [app.main.ui.components.title-bar :refer [title-bar]]
+   [app.main.ui.components.title-bar :refer [title-bar*]]
    [app.main.ui.context :as ctx]
    [app.main.ui.ds.buttons.button :refer [button*]]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
+   [app.main.ui.ds.foundations.assets.icon :as i]
    [app.main.ui.hooks :as h]
    [app.main.ui.hooks.resize :refer [use-resize-hook]]
    [app.main.ui.workspace.tokens.management :refer [tokens-section*]]
@@ -34,16 +35,11 @@
 (mf/defc token-sets-list*
   {::mf/private true}
   [{:keys [tokens-lib]}]
-  (let [;; FIXME: This is an inneficient operation just for being
-        ;; ability to check if there are some sets and lookup the
-        ;; first one when no set is selected, should be REFACTORED; is
-        ;; inneficient because instead of return the sets as-is (tree)
-        ;; it firstly makes it a plain seq from tree.
-        token-sets
-        (some-> tokens-lib (ctob/get-sets))
+  (let [token-sets
+        (some-> tokens-lib (ctob/get-set-tree))
 
-        selected-token-set-name
-        (mf/deref refs/selected-token-set-name)
+        selected-token-set-id
+        (mf/deref refs/selected-token-set-id)
 
         {:keys [token-set-edition-id
                 token-set-new-path]}
@@ -55,12 +51,12 @@
       (when-not token-set-new-path
         [:> tsetslist/inline-add-button*])
 
-      [:> h/sortable-container {}
+      [:> h/sortable-container* {}
        [:> tsets/sets-list*
         {:tokens-lib tokens-lib
          :new-path token-set-new-path
          :edition-id token-set-edition-id
-         :selected selected-token-set-name}]])))
+         :selected selected-token-set-id}]])))
 
 (mf/defc token-management-section*
   {::mf/private true}
@@ -76,7 +72,7 @@
                 :style {"--resize-height" (str resize-height "px")}}
       [:> themes-header*]
       [:div {:class (stl/css :sidebar-header)}
-       [:& title-bar {:title (tr "labels.sets")}
+       [:> title-bar* {:title (tr "labels.sets")}
         (when can-edit?
           [:> tsetslist/add-button*])]]
 
@@ -120,7 +116,8 @@
 
     [:div {:class (stl/css :import-export-button-wrapper)}
      [:> button* {:on-click open-menu
-                  :icon "import-export"
+                  :type "button"
+                  :icon i/import-export
                   :variant "secondary"}
       (tr "workspace.tokens.tools")]
      [:> dropdown-menu* {:show show-menu?
@@ -137,23 +134,19 @@
        (tr "labels.export")]]
 
 
-     (when (and can-edit? (contains? cf/flags :token-units))
+     (when (and can-edit? (contains? cf/flags :token-base-font-size))
        [:> icon-button* {:variant "secondary"
-                         :icon "settings"
+                         :icon i/settings
                          :aria-label "Settings"
                          :on-click open-settings-modal}])]))
 
 (mf/defc tokens-sidebar-tab*
-  {::mf/wrap [mf/memo]}
-  []
+  [{:keys [tokens-lib] :as props}]
   (let [{on-pointer-down-pages :on-pointer-down
          on-lost-pointer-capture-pages :on-lost-pointer-capture
          on-pointer-move-pages :on-pointer-move
          size-pages-opened :size}
-        (use-resize-hook :tokens 200 38 "0.6" :y false nil)
-
-        tokens-lib
-        (mf/deref refs/tokens-lib)]
+        (use-resize-hook :tokens 200 38 "0.6" :y false nil)]
 
     [:div {:class (stl/css :sidebar-wrapper)}
      [:> token-management-section*
@@ -166,5 +159,5 @@
              :on-lost-pointer-capture on-lost-pointer-capture-pages
              :on-pointer-move on-pointer-move-pages}
        [:div {:class (stl/css :resize-handle-horiz)}]]
-      [:> tokens-section* {:tokens-lib tokens-lib}]]
+      [:> tokens-section* props]]
      [:> import-export-button*]]))

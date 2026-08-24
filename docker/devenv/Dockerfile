@@ -25,55 +25,13 @@ RUN set -ex; \
         binutils \
         build-essential autoconf libtool pkg-config
 
-
-################################################################################
-## IMAGE MAGICK
-################################################################################
-
-FROM base AS build-imagemagick
-
-ENV IMAGEMAGICK_VERSION=7.1.1-47 \
-    DEBIAN_FRONTEND=noninteractive
-
-RUN set -ex; \
-    apt-get -qq update; \
-    apt-get -qq upgrade; \
-    apt-get -qqy --no-install-recommends install \
-        libltdl-dev \
-        libpng-dev \
-        libjpeg-dev \
-        libtiff-dev \
-        libwebp-dev \
-        libopenexr-dev \
-        libfftw3-dev \
-        libzip-dev \
-        liblcms2-dev \
-        liblzma-dev \
-        libzstd-dev \
-        libheif-dev \
-        librsvg2-dev \
-    ; \
-    rm -rf /var/lib/apt/lists/*
-
-RUN set -eux; \
-    curl -LfsSo /tmp/magick.tar.gz https://github.com/ImageMagick/ImageMagick/archive/refs/tags/${IMAGEMAGICK_VERSION}.tar.gz; \
-    mkdir -p /tmp/magick; \
-    cd /tmp/magick; \
-    tar -xf /tmp/magick.tar.gz --strip-components=1; \
-    ./configure  --prefix=/opt/imagick; \
-    make -j 2; \
-    make install; \
-    rm -rf /opt/imagick/lib/libMagick++*; \
-    rm -rf /opt/imagick/include; \
-    rm -rf /opt/imagick/share;
-
 ################################################################################
 ## NODE SETUP
 ################################################################################
 
 FROM base AS setup-node
 
-ENV NODE_VERSION=v22.16.0 \
+ENV NODE_VERSION=v22.22.0 \
     PATH=/opt/node/bin:$PATH
 
 RUN set -eux; \
@@ -101,24 +59,57 @@ RUN set -eux; \
     corepack enable; \
     rm -rf /tmp/nodejs.tar.gz;
 
+
+################################################################################
+## CADDYSERVER SETUP
+################################################################################
+
+FROM base AS setup-caddy
+
+ENV CADDY_VERSION=2.10.2
+
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "${ARCH}" in \
+       aarch64|arm64) \
+         BINARY_URL="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_arm64.tar.gz"; \
+         ;; \
+       amd64|x86_64) \
+         BINARY_URL="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"; \
+         ;; \
+       *) \
+         echo "Unsupported arch: ${ARCH}"; \
+         exit 1; \
+         ;; \
+    esac; \
+    curl -LfsSo /tmp/caddy.tar.gz ${BINARY_URL}; \
+    mkdir -p /tmp/caddy; \
+    cd /tmp/caddy; \
+    tar -xf /tmp/caddy.tar.gz; \
+    chown -R root /tmp/caddy; \
+    mv /tmp/caddy/caddy /usr/bin/; \
+    rm -rf /tmp/caddy.tar.gz; \
+    rm -rf /tmp/caddy;
+
 ################################################################################
 ## JVM SETUP
 ################################################################################
 
 FROM base AS setup-jvm
 
-ENV CLOJURE_VERSION=1.12.0.1501
+# https://clojure.org/releases/tools
+ENV CLOJURE_VERSION=1.12.4.1602
 
 RUN set -eux; \
     ARCH="$(dpkg --print-architecture)"; \
     case "${ARCH}" in \
        aarch64|arm64) \
-         ESUM='18071047526ab4b53131f9bb323e8703485ae37fcb2f2c5ef0f1b7bab66d1b94'; \
-         BINARY_URL='https://github.com/adoptium/temurin24-binaries/releases/download/jdk-24%2B36/OpenJDK24U-jdk_aarch64_linux_hotspot_24_36.tar.gz'; \
+         ESUM='9903c6b19183a33725ca1dfdae5b72400c9d00995c76fafc4a0d31c5152f33f7'; \
+         BINARY_URL='https://cdn.azul.com/zulu/bin/zulu25.32.21-ca-jdk25.0.2-linux_aarch64.tar.gz'; \
          ;; \
        amd64|x86_64) \
-         ESUM='c340dee97b6aa215d248bc196dcac5b56e7be9b5c5d45e691344d40d5d0b171d'; \
-         BINARY_URL='https://github.com/adoptium/temurin24-binaries/releases/download/jdk-24%2B36/OpenJDK24U-jdk_x64_linux_hotspot_24_36.tar.gz'; \
+         ESUM='946ad9766d98fc6ab495a1a120072197db54997f6925fb96680f1ecd5591db4e'; \
+         BINARY_URL='https://cdn.azul.com/zulu/bin/zulu25.32.21-ca-jdk25.0.2-linux_x64.tar.gz'; \
          ;; \
        *) \
          echo "Unsupported arch: ${ARCH}"; \
@@ -149,18 +140,24 @@ FROM base AS setup-rust
 ENV PATH=/opt/cargo/bin:$PATH \
     RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
-    RUSTUP_VERSION=1.27.1 \
-    RUST_VERSION=1.85.0 \
+    RUSTUP_VERSION=1.28.2 \
+    RUST_VERSION=1.91.0 \
     EMSCRIPTEN_VERSION=4.0.6
 
 WORKDIR /opt
 
 RUN set -eux; \
     # Same steps as in Rust official Docker image https://github.com/rust-lang/docker-rust/blob/9f287282d513a84cb7c7f38f197838f15d37b6a9/1.81.0/bookworm/Dockerfile
-    dpkgArch="$(dpkg --print-architecture)"; \
-    case "${dpkgArch##*-}" in \
-        amd64) rustArch='x86_64-unknown-linux-gnu'; rustupSha256='6aeece6993e902708983b209d04c0d1dbb14ebb405ddb87def578d41f920f56d' ;; \
-        arm64) rustArch='aarch64-unknown-linux-gnu'; rustupSha256='1cffbf51e63e634c746f741de50649bbbcbd9dbe1de363c9ecef64e278dba2b2' ;; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        'amd64') \
+            rustArch='x86_64-unknown-linux-gnu'; \
+            rustupSha256='20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c'; \
+            ;; \
+        'arm64') \
+            rustArch='aarch64-unknown-linux-gnu'; \
+            rustupSha256='e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c'; \
+            ;; \
     *) echo >&2 "unsupported architecture: ${dpkgArch}"; exit 1 ;; \
     esac; \
     wget "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rustArch}/rustup-init"; \
@@ -183,9 +180,10 @@ RUN set -eux; \
 
 FROM base AS setup-utils
 
-ENV CLJKONDO_VERSION=2025.01.16 \
-    BABASHKA_VERSION=1.12.196 \
-    CLJFMT_VERSION=0.13.0
+ENV CLJKONDO_VERSION=2026.01.19 \
+    BABASHKA_VERSION=1.12.208 \
+    CLJFMT_VERSION=0.15.6 \
+    PIXI_VERSION=0.63.2
 
 RUN set -ex; \
     ARCH="$(dpkg --print-architecture)"; \
@@ -227,6 +225,26 @@ RUN set -ex; \
     cd /opt/utils/bin; \
     tar -xf /tmp/babashka.tar.gz; \
     rm -rf /tmp/babashka.tar.gz;
+
+RUN set -ex; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "${ARCH}" in \
+       aarch64|arm64) \
+         BINARY_URL="https://github.com/prefix-dev/pixi/releases/download/v$PIXI_VERSION/pixi-aarch64-unknown-linux-musl.tar.gz"; \
+         ;; \
+       amd64|x86_64) \
+         BINARY_URL="https://github.com/prefix-dev/pixi/releases/download/v$PIXI_VERSION/pixi-x86_64-unknown-linux-musl.tar.gz"; \
+         ;; \
+       *) \
+         echo "Unsupported arch: ${ARCH}"; \
+         exit 1; \
+         ;; \
+    esac; \
+    cd /tmp; \
+    curl -LfsSo /tmp/pixi.tar.gz ${BINARY_URL}; \
+    cd /opt/utils/bin; \
+    tar -xf /tmp/pixi.tar.gz; \
+    rm -rf /tmp/pixi.tar.gz;
 
 RUN set -ex; \
     ARCH="$(dpkg --print-architecture)"; \
@@ -310,6 +328,7 @@ RUN set -ex; \
       fonts-wqy-zenhei \
       fonts-tlwg-loma-otf \
       fonts-freefont-ttf \
+      poppler-utils \
       \
       libasound2t64 \
       libatk-bridge2.0-0t64 \
@@ -378,7 +397,7 @@ ENV LANG='C.UTF-8' \
     RUSTUP_HOME="/opt/rustup" \
     PATH="/opt/jdk/bin:/opt/utils/bin:/opt/clojure/bin:/opt/node/bin:/opt/imagick/bin:/opt/cargo/bin:$PATH"
 
-COPY --from=build-imagemagick /opt/imagick /opt/imagick
+COPY --from=penpotapp/imagemagick:7.1.2-13 /opt/imagick /opt/imagick
 COPY --from=setup-jvm /opt/jdk /opt/jdk
 COPY --from=setup-jvm /opt/clojure /opt/clojure
 COPY --from=setup-node /opt/node /opt/node
@@ -386,6 +405,7 @@ COPY --from=setup-utils /opt/utils /opt/utils
 COPY --from=setup-rust /opt/cargo /opt/cargo
 COPY --from=setup-rust /opt/rustup /opt/rustup
 COPY --from=setup-rust /opt/emsdk /opt/emsdk
+COPY --from=setup-caddy /usr/bin/caddy /usr/bin/caddy
 
 COPY files/nginx.conf /etc/nginx/nginx.conf
 COPY files/nginx-mime.types /etc/nginx/mime.types
@@ -396,8 +416,10 @@ COPY files/vimrc          /root/.vimrc
 COPY files/tmux.conf      /root/.tmux.conf
 COPY files/sudoers        /etc/sudoers
 
+COPY files/Caddyfile           /home/
+COPY files/selfsigned.crt      /home/
+COPY files/selfsigned.key      /home/
 COPY files/start-tmux.sh       /home/start-tmux.sh
-COPY files/start-tmux-back.sh  /home/start-tmux-back.sh
 COPY files/entrypoint.sh       /home/entrypoint.sh
 COPY files/init.sh             /home/init.sh
 

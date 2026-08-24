@@ -392,40 +392,16 @@
   the displacement and apply it to the third copy. This is useful for doing
   grids or cascades of cloned objects."
   [id-original id-duplicated]
-  (dm/assert!
-   "expected valid uuid for `id-original` and `id-duplicated`"
-   (and (uuid? id-original) (uuid? id-duplicated)))
-
   (ptk/reify ::memorize-duplicated
     ptk/UpdateEvent
     (update [_ state]
-      ;; Check both shapes in the workspace before memorizing
-      (let [file-id (:current-file-id state)
-            page-id (:current-page-id state)
-            fdata   (dsh/lookup-file-data state file-id)
-            page    (dsh/get-page fdata page-id)
-            objects (:objects page)
-            shape-original  (get objects id-original)
-            shape-duplicated (get objects id-duplicated)]
-
-        ;; Abort if either shape is a print area
-        (if (or (and shape-original (dsh/shape-is-print-area? shape-original))
-                (and shape-duplicated (dsh/shape-is-print-area? shape-duplicated)))
-          (do
-            (js/console.debug
-             "memorize-duplicated: aborting because one of the shapes is a print-area"
-             (clj->js {:original id-original :duplicated id-duplicated}))
-            ;; Abort: return original state (no change)
-            state)
-          ;; Otherwise, record duplication info
-          (assoc-in state [:workspace-local :duplicated]
-                    {:id-original id-original
-                     :id-duplicated id-duplicated}))))
+      (assoc-in state [:workspace-local :duplicated] {:id-original id-original
+                                                      :id-duplicated id-duplicated}))
 
     ptk/WatchEvent
     (watch [_ _ stream]
       (let [stopper (rx/filter (ptk/type? ::memorize-duplicated) stream)]
-        (->> (rx/timer 10000) ;; after 10s clear the record unless replaced
+        (->> (rx/timer 10000) ;; This time may be adjusted after some user testing.
              (rx/take-until stopper)
              (rx/map clear-memorize-duplicated))))))
 
@@ -463,25 +439,11 @@
     (watch [it state _]
       (let [page     (dsh/lookup-page state)
             objects  (:objects page)
-            ;; normalize ids to a set of allowed-duplicate ids (same as before)
             ids (into #{}
                       (comp (map (d/getf objects))
                             (filter #(ctk/allow-duplicate? objects %))
                             (map :id))
                       ids)]
-
-        ;; Abort if any of the supplied ids is a print-area shape.
-        (let [print-area-ids (->> ids
-                                  (filter (fn [id]
-                                            (let [shape (get objects id)]
-                                              (and shape (dsh/shape-is-print-area? shape)))))
-                                  (into []))]
-          (when (seq print-area-ids)
-            (js/console.debug "duplicate-shapes: aborting because ids contain print-area" (clj->js print-area-ids))
-            ;; return empty observable -> abort operation
-            (rx/empty)))
-
-        ;; If we reach here and ids is non-empty proceed as before.
         (when (seq ids)
           (let [obj             (get objects (first ids))
                 delta           (if move-delta?
@@ -563,24 +525,10 @@
      ptk/WatchEvent
      (watch [_ state _]
        (when (or (not move-delta?) (nil? (get-in state [:workspace-local :transform])))
-         (let [page-id (or (:current-page-id state) nil)
-               objects (dsh/lookup-page-objects state page-id)
-               selected (dsh/lookup-selected state)
-               ;; Find any print-area ids in the current selection
-               print-area-ids (->> selected
-                                   (filter (fn [id]
-                                             (let [shape (get objects id)]
-                                               (and shape (dsh/shape-is-print-area? shape)))))
-                                   (into []))]
-           (if (seq print-area-ids)
-             (do
-               (js/console.debug "duplicate-selected: aborting because selection contains print-area" (clj->js print-area-ids))
-               ;; abort the whole operation
-               (rx/empty))
-             ;; otherwise proceed with duplicate
-             (rx/of (duplicate-shapes selected
-                                      :move-delta? move-delta?
-                                      :alt-duplication? alt-duplication?)))))))))
+         (let [selected (dsh/lookup-selected state)]
+           (rx/of (duplicate-shapes selected
+                                    :move-delta? move-delta?
+                                    :alt-duplication? alt-duplication?))))))))
 
 (defn change-hover-state
   [id value]

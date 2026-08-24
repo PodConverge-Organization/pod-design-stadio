@@ -15,7 +15,7 @@
    [app.main.data.modal :as modal]
    [app.main.refs :as refs]
    [app.main.store :as st]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.util.dom :as dom]
    [app.util.dom.normalize-wheel :as nw]
    [app.util.i18n :refer [tr]]
@@ -26,10 +26,10 @@
    [rumext.v2 :as mf]))
 
 (def ^:private arrow-icon
-  (i/icon-xref :arrow (stl/css :arrow-icon)))
+  (deprecated-icon/icon-xref :arrow (stl/css :arrow-icon)))
 
 (def ^:private download-icon
-  (i/icon-xref :add (stl/css :download-icon)))
+  (deprecated-icon/icon-xref :add (stl/css :download-icon)))
 
 (def builtin-templates
   (l/derived :builtin-templates st/state))
@@ -227,10 +227,18 @@
                                :right (> scroll-available client-width)}))))
 
         on-move-left
-        (mf/use-fn #(dom/scroll-by! (mf/ref-val content-ref) -300 0))
+        (mf/use-fn
+         (fn [event]
+           (if (kbd/right-arrow? event)
+             (dom/scroll-by! (mf/ref-val content-ref) 300 0)
+             (dom/scroll-by! (mf/ref-val content-ref) -300 0))))
 
         on-move-right
-        (mf/use-fn #(dom/scroll-by! (mf/ref-val content-ref) 300 0))
+        (mf/use-fn
+         (fn [event]
+           (if (kbd/left-arrow? event)
+             (dom/scroll-by! (mf/ref-val content-ref) -300 0)
+             (dom/scroll-by! (mf/ref-val content-ref) 300 0))))
 
         on-import-template
         (mf/use-fn

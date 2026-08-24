@@ -12,11 +12,13 @@
    [app.common.files.helpers :as cfh]
    [app.common.geom.shapes :as gsh]
    [app.common.types.color :as clr]
+   [app.common.types.component :as ctk]
    [app.common.types.path :as path]
    [app.common.types.shape :as cts]
    [app.common.types.shape-tree :as ctt]
    [app.common.types.shape.layout :as ctl]
    [app.main.data.workspace.modifiers :as dwm]
+   [app.main.data.workspace.variants :as dwv]
    [app.main.features :as features]
    [app.main.refs :as refs]
    [app.main.store :as st]
@@ -51,7 +53,7 @@
    [app.main.ui.workspace.viewport.selection :as selection]
    [app.main.ui.workspace.viewport.snap-distances :as snap-distances]
    [app.main.ui.workspace.viewport.snap-points :as snap-points]
-   [app.main.ui.workspace.viewport.top-bar :refer [path-edition-bar* grid-edition-bar* view-only-bar*]]
+   [app.main.ui.workspace.viewport.top-bar :refer [grid-edition-bar* path-edition-bar* view-only-bar*]]
    [app.main.ui.workspace.viewport.utils :as utils]
    [app.main.ui.workspace.viewport.viewport-ref :refer [create-viewport-ref]]
    [app.main.ui.workspace.viewport.widgets :as widgets]
@@ -145,9 +147,11 @@
         [viewport-ref on-viewport-ref]
         (create-viewport-ref)
 
-        ;; VARS
-        disable-paste     (mf/use-var false)
-        in-viewport?      (mf/use-var false)
+        canvas-ref        (mf/use-ref nil)
+
+        ;; STATE REFS
+        disable-paste-ref (mf/use-ref false)
+        in-viewport-ref   (mf/use-ref false)
 
         ;; STREAMS
         move-stream       (mf/use-memo #(rx/subject))
@@ -206,10 +210,10 @@
         on-pointer-down   (actions/on-pointer-down @hover selected edition drawing-tool text-editing? path-editing? grid-editing?
                                                    path-drawing? create-comment? space? panning z? read-only?)
 
-        on-pointer-up     (actions/on-pointer-up disable-paste)
+        on-pointer-up     (actions/on-pointer-up disable-paste-ref)
 
-        on-pointer-enter  (actions/on-pointer-enter in-viewport?)
-        on-pointer-leave  (actions/on-pointer-leave in-viewport?)
+        on-pointer-enter  (actions/on-pointer-enter in-viewport-ref)
+        on-pointer-leave  (actions/on-pointer-leave in-viewport-ref)
         on-pointer-move   (actions/on-pointer-move move-stream)
         on-move-selected  (actions/on-move-selected hover hover-ids selected space? z? read-only?)
         on-menu-selected  (actions/on-menu-selected hover hover-ids selected read-only?)
@@ -257,11 +261,15 @@
         show-rulers?             (and (contains? layout :rulers) (not hide-ui?))
 
 
-        disabled-guides?         (or drawing-tool transform path-drawing? path-editing?)
+        disabled-guides?         (or drawing-tool transform path-drawing? path-editing? @space? @mod?)
 
         single-select?           (= (count selected-shapes) 1)
 
-        first-shape (first selected-shapes)
+        first-shape              (first selected-shapes)
+
+        show-add-variant?        (and single-select?
+                                      (or (ctk/is-variant-container? first-shape)
+                                          (ctk/is-variant? first-shape)))
 
         show-padding?
         (and (nil? transform)
@@ -288,9 +296,15 @@
                    (:y first-shape)
                    (:y selected-frame))
 
-        rule-area-size (/ rulers/ruler-area-size zoom)]
+        rule-area-size (/ rulers/ruler-area-size zoom)
 
-    (hooks/setup-dom-events zoom disable-paste in-viewport? read-only? drawing-tool path-drawing?)
+        add-variant
+        (mf/use-fn
+         (mf/deps first-shape)
+         #(st/emit!
+           (dwv/add-new-variant (:id first-shape))))]
+
+    (hooks/setup-dom-events zoom disable-paste-ref in-viewport-ref read-only? drawing-tool path-drawing?)
     (hooks/setup-viewport-size vport viewport-ref)
     (hooks/setup-cursor cursor alt? mod? space? panning drawing-tool path-drawing? path-editing? z? read-only?)
     (hooks/setup-keyboard alt? mod? space? z? shift?)
@@ -428,6 +442,7 @@
        (when show-text-editor?
          (if (features/active-feature? @st/state "text-editor/v2")
            [:& editor-v2/text-editor {:shape editing-shape
+                                      :canvas-ref canvas-ref
                                       :modifiers modifiers}]
            [:& editor-v1/text-editor-svg {:shape editing-shape
                                           :modifiers modifiers}]))
@@ -536,11 +551,11 @@
            :alt? @alt?
            :shift? @shift?}])
 
-       [:& widgets/frame-titles
+       [:> widgets/frame-titles*
         {:objects base-objects
          :selected selected
          :zoom zoom
-         :show-artboard-names? show-artboard-names?
+         :is-show-artboard-names show-artboard-names?
          :on-frame-enter on-frame-enter
          :on-frame-leave on-frame-leave
          :on-frame-select on-frame-select
@@ -571,9 +586,8 @@
            :focus focus}])
 
        (when show-pixel-grid?
-         [:& widgets/pixel-grid
-          {:vbox vbox
-           :zoom zoom}])
+         [:> widgets/pixel-grid* {:vbox vbox
+                                  :zoom zoom}])
 
        (when show-snap-points?
          [:& snap-points/snap-points
@@ -596,13 +610,17 @@
            :page-id page-id}])
 
        (when show-cursor-tooltip?
-         [:& widgets/cursor-tooltip
-          {:zoom zoom
-           :tooltip tooltip}])
+         [:> widgets/cursor-tooltip* {:zoom zoom
+                                      :tooltip tooltip}])
 
        (when show-selrect?
-         [:& widgets/selection-rect {:data selrect
-                                     :zoom zoom}])
+         [:> widgets/selection-rect* {:data selrect
+                                      :zoom zoom}])
+
+       (when show-add-variant?
+         [:> widgets/button-add* {:shape first-shape
+                                  :zoom zoom
+                                  :on-click add-variant}])
 
        (when show-presence?
          [:& presence/active-cursors

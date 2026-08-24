@@ -19,7 +19,7 @@
   ([worker message]
    (send-message! worker message nil))
 
-  ([worker {sender-id :sender-id :as message} {:keys [many?] :or {many? false}}]
+  ([worker {sender-id :sender-id :as message} {:keys [many? ignore-response?] :or {many? false ignore-response? false}}]
    (let [take-messages
          (fn [ob]
            (if many?
@@ -34,11 +34,13 @@
 
      (if (some? instance)
        (do (.postMessage instance data transfer)
-           (->> (:stream worker)
-                (rx/filter #(= (:reply-to %) sender-id))
-                (take-messages)
-                (rx/filter (complement :dropped))
-                (rx/map handle-response)))
+           (if (not ignore-response?)
+             (->> (:stream worker)
+                  (rx/filter #(= (:reply-to %) sender-id))
+                  (take-messages)
+                  (rx/filter (complement :dropped))
+                  (rx/map handle-response))
+             (rx/empty)))
        (rx/empty)))))
 
 (defn ask!
@@ -50,6 +52,17 @@
     {:sender-id (uuid/next)
      :payload message
      :transfer transfer})))
+
+(defn emit!
+  ([worker message]
+   (emit! worker message nil))
+  ([worker message transfer]
+   (send-message!
+    worker
+    {:sender-id (uuid/next)
+     :payload message
+     :transfer transfer}
+    {:ignore-response? true})))
 
 (defn ask-many!
   ([worker message]
@@ -88,8 +101,8 @@
               (rx/push! bus message))))
 
         handle-error
-        (fn [error]
-          (on-error worker (.-data error)))]
+        (fn [event]
+          (on-error worker (.-data event)))]
 
     (.addEventListener instance "message" handle-message)
     (.addEventListener instance "error" handle-error)

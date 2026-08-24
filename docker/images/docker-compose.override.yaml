@@ -4,5 +4,5 @@ services:
   penpot-frontend:
     image: sajjadardekani/penpot-frontend:custom
 
-#  penpot-exporter:
-#    image: sajjadardekani/penpot-exporter:custom
+  penpot-backend:
+    image: sajjadardekani/penpot-backend:custom

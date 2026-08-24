@@ -10,15 +10,17 @@
    [app.main.style :as stl])
   (:require
    [app.common.data :as d]
-   [app.common.files.helpers :as cfh]
-   [app.common.files.tokens :as cft]
+   [app.common.files.tokens :as cfo]
+   [app.common.path-names :as cpn]
    [app.common.types.token :as ctt]
+   [app.config :as cf]
    [app.main.data.workspace.tokens.application :as dwta]
    [app.main.data.workspace.tokens.color :as dwtc]
+   [app.main.data.workspace.tokens.format :as dwtf]
    [app.main.refs :as refs]
-   [app.main.ui.components.color-bullet :refer [color-bullet]]
-   [app.main.ui.ds.foundations.assets.icon :refer [icon*]]
+   [app.main.ui.ds.foundations.assets.icon :refer [icon*] :as i]
    [app.main.ui.ds.foundations.utilities.token.token-status :refer [token-status-icon*]]
+   [app.main.ui.ds.utilities.swatch :refer [swatch*]]
    [app.util.dom :as dom]
    [app.util.i18n :refer [tr]]
    [clojure.set :as set]
@@ -26,6 +28,7 @@
    [rumext.v2 :as mf]))
 
 ;; Translation dictionaries
+
 (def ^:private attribute-dictionary
   {:rotation "Rotation"
    :opacity "Opacity"
@@ -74,14 +77,6 @@
    :x :x
    :y :y})
 
-(def ^:private category-dictionary
-  {:stroke-width "Stroke Width"
-   :spacing "Spacing"
-   :sizing "Sizing"
-   :border-radius "Border Radius"
-   :x "X"
-   :y "Y"})
-
 ;; Helper functions
 
 (defn partially-applied-attr
@@ -99,17 +94,15 @@
   (str/join "\n"
             (map (fn [[category values]]
                    (if (#{:x :y} category)
-                     (dm/str "- " (category-dictionary category))
-                     (dm/str "- " (category-dictionary category) ": "
+                     (dm/str "- " (dwtf/category-dictionary category))
+                     (dm/str "- " (dwtf/category-dictionary category) ": "
                              (str/join ", " (map attribute-dictionary values)) ".")))
                  grouped-values)))
 
 (defn- generate-tooltip
   "Generates a tooltip for a given token"
   [is-viewer shape theme-token token half-applied no-valid-value ref-not-in-active-set]
-  (let [{:keys [name type resolved-value]} token
-        value (cond->> (:value token)
-                (= :font-family type) ctt/join-font-family)
+  (let [{:keys [name type resolved-value value]} token
         resolved-value-theme (:resolved-value theme-token)
         resolved-value (or resolved-value-theme resolved-value)
         {:keys [title] :as token-props} (dwta/get-token-properties theme-token)
@@ -125,8 +118,8 @@
         grouped-values (group-by dimensions-dictionary app-token-keys)
 
         base-title (dm/str "Token: " name "\n"
-                           (tr "workspace.tokens.original-value" value) "\n"
-                           (tr "workspace.tokens.resolved-value" resolved-value)
+                           (tr "workspace.tokens.original-value" (dwtf/format-token-value value)) "\n"
+                           (tr "workspace.tokens.resolved-value" (dwtf/format-token-value resolved-value))
                            (when (= (:type token) :number)
                              (dm/str "\n" (tr "workspace.tokens.more-options"))))]
 
@@ -164,9 +157,9 @@
 
 (defn- applied-all-attributes?
   [token selected-shapes attributes]
-  (let [ids-by-attributes (cft/shapes-ids-by-applied-attributes token selected-shapes attributes)
+  (let [ids-by-attributes (cfo/shapes-ids-by-applied-attributes token selected-shapes attributes)
         shape-ids         (into #{} xf:map-id selected-shapes)]
-    (cft/shapes-applied-all? ids-by-attributes shape-ids attributes)))
+    (cfo/shapes-applied-all? ids-by-attributes shape-ids attributes)))
 
 (defn attributes-match-selection?
   [selected-shapes attrs & {:keys [selected-inside-layout?]}]
@@ -174,7 +167,7 @@
    ;; Edge-case for allowing margin attribute on shapes inside layout parent
    (and selected-inside-layout? (set/subset? ctt/spacing-margin-keys attrs))
    (some (fn [shape]
-           (ctt/any-appliable-attr? attrs (:type shape)))
+           (ctt/any-appliable-attr-for-shape? attrs (:type shape) (:layout shape)))
          selected-shapes)))
 
 (def token-types-with-status-icon
@@ -185,8 +178,10 @@
   [{:keys [on-click token on-context-menu selected-shapes is-selected-inside-layout active-theme-tokens]}]
   (let [{:keys [name value errors type]} token
 
+        resolved-token (get active-theme-tokens (:name token))
+
         has-selected?  (pos? (count selected-shapes))
-        is-reference?  (cft/is-reference? token)
+        is-reference?  (cfo/is-reference? token)
         contains-path? (str/includes? name ".")
 
         attributes (as-> (get dwta/token-properties type) $
@@ -199,7 +194,7 @@
 
         applied?
         (if has-selected?
-          (cft/shapes-token-applied? token selected-shapes attributes)
+          (cfo/shapes-token-applied? token selected-shapes attributes)
           false)
 
         half-applied?
@@ -217,8 +212,10 @@
         is-viewer? (not can-edit?)
 
         ref-not-in-active-set
-        (and is-reference?
-             (not (contains-reference-value? value active-theme-tokens)))
+        (if (contains? cf/flags :tokenscript)
+          (seq (:errors resolved-token))
+          (and is-reference?
+               (not (contains-reference-value? value active-theme-tokens))))
 
         no-valid-value (seq errors)
 
@@ -227,10 +224,9 @@
             no-valid-value)
 
         color
-        (when (cft/color-token? token)
-          (let [theme-token (get active-theme-tokens name)]
-            (or (dwtc/resolved-token-bullet-color theme-token)
-                (dwtc/resolved-token-bullet-color token))))
+        (when (cfo/color-token? token)
+          (or (dwtc/resolved-token-bullet-color resolved-token)
+              (dwtc/resolved-token-bullet-color token)))
 
         status-icon? (contains? token-types-with-status-icon type)
 
@@ -302,11 +298,13 @@
      (cond
        errors?
        [:> icon*
-        {:icon-id "broken-link"
-         :class (stl/css :token-pill-icon)}]
+        {:icon-id i/broken-link
+         :class (stl/css :token-pill-icon)
+         :aria-label (tr "workspace.tokens.missing-reference")}]
 
        color
-       [:& color-bullet {:color color :mini true}]
+       [:> swatch* {:background color
+                    :size "small"}]
 
        status-icon?
        [:> token-status-icon*
@@ -314,10 +312,9 @@
          :class (stl/css :token-pill-icon)}])
 
      (if contains-path?
-       (let [[first-part last-part] (cfh/split-by-last-period name)]
+       (let [[_ last-part] (cpn/split-by-last-period name)]
          [:span {:class (stl/css :divided-name-wrapper)
                  :aria-label name}
-          [:span {:class (stl/css :first-name-wrapper)} first-part]
           [:span {:class (stl/css :last-name-wrapper)} last-part]])
        [:span {:class (stl/css :name-wrapper)
                :aria-label name}

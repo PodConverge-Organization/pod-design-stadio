@@ -11,7 +11,7 @@
    [app.common.data.macros :as dm]
    [app.main.ui.components.select :as cs]
    [app.main.ui.hooks :as hooks]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.util.dom :as dom]
    [app.util.forms :as fm]
    [app.util.i18n :as i18n :refer [tr]]
@@ -50,18 +50,19 @@
         touched?     (and (contains? (:data @form) input-name)
                           (get-in @form [:touched input-name]))
 
-        error        (get-in @form [:errors input-name])
+        error        (or (get-in @form [:errors input-name])
+                         (get-in @form [:extra-errors input-name]))
 
         value        (get-in @form [:data input-name] "")
 
         help-icon'   (cond
                        (and (= input-type "password")
                             (= @type' "password"))
-                       i/shown
+                       deprecated-icon/shown
 
                        (and (= input-type "password")
                             (= @type' "text"))
-                       i/hide
+                       deprecated-icon/hide
 
                        :else
                        help-icon)
@@ -130,7 +131,7 @@
                  :for (name input-name)} label
 
          (when is-checkbox?
-           [:span {:class (stl/css-case :global/checked checked?)} (when checked? i/status-tick)])
+           [:span {:class (stl/css-case :global/checked checked?)} (when checked? deprecated-icon/status-tick)])
 
          (if is-checkbox?
            [:> :input props]
@@ -145,11 +146,11 @@
 
             (when show-valid?
               [:span {:class (stl/css :valid-icon)}
-               i/tick])
+               deprecated-icon/tick])
 
             (when show-invalid?
               [:span {:class (stl/css :invalid-icon)}
-               i/close])])]
+               deprecated-icon/close])])]
 
         (some? children)
         [:label {:for (name input-name)}
@@ -197,7 +198,7 @@
                   :valid     (and touched? (not error))
                   :invalid   (and touched? error)
                   :disabled  disabled)
-                  ;; :empty     (str/empty? value)
+        ;; :empty     (str/empty? value)
 
 
         on-focus  #(reset! focus? true)
@@ -426,7 +427,7 @@
                       (dom/prevent-default event)
                       (when (fn? on-submit)
                         (on-submit form event))))]
-    [:& (mf/provider form-ctx) {:value form}
+    [:> (mf/provider form-ctx) {:value form}
      [:form {:class class :on-submit on-submit'} children]]))
 
 (defn- conj-dedup
@@ -585,4 +586,4 @@
                                         :caution (:caution item))}
             [:span {:class (stl/css :text)} (:text item)]
             [:button {:class (stl/css :icon)
-                      :on-click #(remove-item! item)} i/close]]])])]))
+                      :on-click #(remove-item! item)} deprecated-icon/close]]])])]))

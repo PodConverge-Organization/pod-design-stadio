@@ -10,10 +10,10 @@
    [app.common.logging :as log]
    [app.main.data.modal :as modal]
    [app.main.store :as st]
-   [app.main.ui.auth.login :refer [login-methods]]
+   [app.main.ui.auth.login :refer [login-dialog*]]
    [app.main.ui.auth.recovery-request :refer [recovery-request-page]]
    [app.main.ui.auth.register :refer [register-methods register-success-page terms-register register-validate-form]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [rumext.v2 :as mf]))
@@ -69,13 +69,15 @@
        [:h2 {:class (stl/css :modal-title)} (tr "labels.continue-with-penpot")]
        [:button {:class (stl/css :modal-close-btn)
                  :title (tr "labels.close")
-                 :on-click close} i/close]]
+                 :on-click close} deprecated-icon/close]]
 
       [:div  {:class (stl/css :modal-content)}
        (case current-section
          :login
          [:div {:class (stl/css :form-container)}
-          [:& login-methods {:on-success-callback success-login :origin :viewer}]
+          [:> login-dialog*
+           {:on-success-callback success-login
+            :origin :viewer}]
           [:div {:class (stl/css :links)}
            [:div {:class (stl/css :recovery-request)}
             [:a {:on-click set-section

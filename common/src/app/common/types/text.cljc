@@ -90,6 +90,10 @@
   [{:fill-color clr/black
     :fill-opacity 1}])
 
+(def default-paragraph-attrs
+  {:text-align "left"
+   :text-direction "ltr"})
+
 (def default-text-attrs
   {:font-id "sourcesanspro"
    :font-family "sourcesanspro"
@@ -249,12 +253,16 @@
 (defn equal-attrs?
   "Given a text structure, and a map of attrs, check that all the internal attrs in
    paragraphs and sentences have the same attrs"
-  [item attrs]
-  (let [item-attrs (dissoc item :text :type :key :children)]
-    (and
-     (or (empty? item-attrs)
-         (= attrs (dissoc item :text :type :key :children)))
-     (every? #(equal-attrs? % attrs) (:children item)))))
+  ([item attrs]
+   ;; Ignore the root attrs of the content. We only want to check paragraphs and sentences
+   (equal-attrs? item attrs true))
+  ([item attrs ignore?]
+   (let [item-attrs (dissoc item :text :type :key :children)]
+     (and
+      (or ignore?
+          (empty? item-attrs)
+          (= attrs (dissoc item :text :type :key :children)))
+      (every? #(equal-attrs? % attrs false) (:children item))))))
 
 (defn get-first-paragraph-text-attrs
   "Given a content text structure, extract it's first paragraph
@@ -385,7 +393,7 @@
               :else
               (cons [node-style (dm/str head-text "" (:text node))] (rest acc)))
 
-               ;; We add an end-of-line when finish a paragraph
+            ;; We add an end-of-line when finish a paragraph
             new-acc
             (if (= (:type node) "paragraph")
               (let [[hs ht] (first new-acc)]
@@ -399,17 +407,19 @@
 (defn change-text
   "Changes the content of the text shape to use the text as argument. Will use the styles of the
    first paragraph and text that is present in the shape (and override the rest)"
-  [content text]
+  [content text & {:as styles}]
   (let [root-styles (select-keys content root-attrs)
 
         paragraph-style
         (merge
          default-text-attrs
+         styles
          (select-keys (->> content (node-seq is-paragraph-node?) first) text-all-attrs))
 
         text-style
         (merge
          default-text-attrs
+         styles
          (select-keys (->> content (node-seq is-text-node?) first) text-all-attrs))
 
         paragraph-texts

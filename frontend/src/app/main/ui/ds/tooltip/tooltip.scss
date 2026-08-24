@@ -4,9 +4,9 @@
 //
 // Copyright (c) KALEIDOS INC
 
-@use "../_sizes.scss" as *;
-@use "../_borders.scss" as *;
-@use "../typography.scss" as t;
+@use "ds/_sizes.scss" as *;
+@use "ds/_borders.scss" as *;
+@use "ds/typography.scss" as t;
 
 $arrow-side: 12px;
 
@@ -159,4 +159,6 @@ $arrow-side: 12px;
   block-size: fit-content;
   inline-size: fit-content;
   line-height: 0;
+  display: grid;
+  max-width: 100%;
 }

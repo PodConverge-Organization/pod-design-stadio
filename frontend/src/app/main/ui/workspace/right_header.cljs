@@ -7,9 +7,7 @@
 (ns app.main.ui.workspace.right-header
   (:require-macros [app.main.style :as stl])
   (:require
-   [app.main.data.common :as dcm]
    [app.main.data.event :as ev]
-   [app.main.data.modal :as modal]
    [app.main.data.shortcuts :as scd]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.drawing.common :as dwc]
@@ -19,23 +17,19 @@
    [app.main.store :as st]
    [app.main.ui.components.dropdown :refer [dropdown]]
    [app.main.ui.context :as ctx]
-   [app.main.ui.dashboard.team]
+   [app.main.ui.ds.buttons.button :refer [button*]]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
-   [app.main.ui.exports.assets :refer [export-progress-widget]]
+   [app.main.ui.ds.foundations.assets.icon :as i]
+   [app.main.ui.exports.assets :refer [progress-widget*]]
    [app.main.ui.formats :as fmt]
-   [app.main.ui.icons :as i]
-   [app.main.ui.workspace.presence :refer [active-sessions]]
+   [app.main.ui.workspace.presence :refer [active-sessions*]]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
-   [okulary.core :as l]
    [rumext.v2 :as mf]))
-
-(def ref:persistence-status
-  (l/derived :status refs/persistence))
 
 ;; --- Zoom Widget
 
-(mf/defc zoom-widget-workspace
+(mf/defc zoom-widget-workspace*
   {::mf/wrap [mf/memo]
    ::mf/wrap-props false}
   [{:keys [zoom on-increase on-decrease on-zoom-reset on-zoom-fit on-zoom-selected]}]
@@ -71,11 +65,12 @@
         zoom (fmt/format-percent zoom {:precision 0})]
 
     [:*
-     [:div {:on-click open-dropdown
+     [:div {:on-click (if open? close-dropdown open-dropdown)
             :class (stl/css-case :zoom-widget true
                                  :selected open?)
             :title (tr "workspace.header.zoom")}
       [:span {:class (stl/css :label)} zoom]]
+
      [:& dropdown {:show open? :on-close close-dropdown}
       [:ul {:class (stl/css :dropdown)}
        [:li {:class (stl/css :basic-zoom-bar)}
@@ -83,15 +78,16 @@
          [:> icon-button* {:variant "ghost"
                            :aria-label (tr "shortcuts.decrease-zoom")
                            :on-click on-decrease
-                           :icon "remove"}]
+                           :icon i/remove}]
          [:p {:class (stl/css :zoom-text)} zoom]
          [:> icon-button* {:variant "ghost"
                            :aria-label (tr "shortcuts.increase-zoom")
                            :on-click on-increase
-                           :icon "add"}]]
-        [:button {:class (stl/css :reset-btn)
-                  :on-click on-zoom-reset}
+                           :icon i/add}]]
+        [:> button* {:variant "ghost"
+                     :on-click on-zoom-reset}
          (tr "workspace.header.reset-zoom")]]
+
        [:li {:class (stl/css :zoom-option)
              :on-click on-zoom-fit}
         (tr "workspace.header.zoom-fit-all")
@@ -99,6 +95,7 @@
          (for [sc (scd/split-sc (sc/get-tooltip :fit-all))]
            [:span {:class (stl/css :shortcut-key)
                    :key (str "zoom-fit-" sc)} sc])]]
+
        [:li {:class (stl/css :zoom-option)
              :on-click on-zoom-selected}
         (tr "workspace.header.zoom-selected")
@@ -110,7 +107,7 @@
 ;; --- Header Component
 
 (mf/defc right-header*
-  [{:keys [file layout page-id]}]
+  [{:keys [file layout]}]
   (let [file-id           (:id file)
 
         threads-map       (mf/deref refs/comment-threads)
@@ -130,29 +127,12 @@
 
         input-ref         (mf/use-ref nil)
 
-        team              (mf/deref refs/team)
-        permissions       (get team :permissions)
-
         has-unread-comments?
         (mf/with-memo [threads-map file-id]
           (->> (vals threads-map)
                (some #(and (= (:file-id %) file-id)
                            (pos? (:count-unread-comments %))))
                (boolean)))
-
-        display-share-button?
-        (and (not (:is-default team))
-             (or (:is-admin permissions)
-                 (:is-owner permissions)))
-
-        nav-to-viewer
-        (mf/use-fn
-         (mf/deps file-id page-id)
-         (fn []
-           (let [params {:page-id page-id
-                         :file-id file-id
-                         :section "interactions"}]
-             (st/emit! (dcm/go-to-viewer params)))))
 
         active-comments
         (mf/use-fn
@@ -183,13 +163,7 @@
            (st/emit! (-> (dwh/initialize-history)
                          (vary-meta assoc ::ev/origin "workspace-header")))))
 
-        open-share-dialog
-        (mf/use-fn
-         (mf/deps team)
-         (fn []
-           (st/emit! (modal/show {:type :invite-members
-                                  :team team
-                                  :origin :workspace}))))]
+]
 
     (mf/with-effect [editing?]
       (when ^boolean editing?
@@ -197,52 +171,34 @@
 
     [:div {:class (stl/css :workspace-header-right)}
      [:div {:class (stl/css :users-section)}
-      [:& active-sessions]]
+      [:> active-sessions*]]
 
-     [:& export-progress-widget]
+     [:> progress-widget*]
 
      [:div {:class (stl/css :separator)}]
 
      [:div {:class (stl/css :zoom-section)}
-      [:& zoom-widget-workspace
-       {:zoom zoom
-        :on-increase on-increase
-        :on-decrease on-decrease
-        :on-zoom-reset on-zoom-reset
-        :on-zoom-fit on-zoom-fit
-        :on-zoom-selected on-zoom-selected}]]
+      [:> zoom-widget-workspace* {:zoom zoom
+                                  :on-increase on-increase
+                                  :on-decrease on-decrease
+                                  :on-zoom-reset on-zoom-reset
+                                  :on-zoom-fit on-zoom-fit
+                                  :on-zoom-selected on-zoom-selected}]]
 
-     [:div {:class (stl/css :comments-section)}
-      [:button {:title (tr "workspace.toolbar.comments" (sc/get-tooltip :add-comment))
-                :aria-label (tr "workspace.toolbar.comments" (sc/get-tooltip :add-comment))
-                :class (stl/css-case :comments-btn true
-                                     :selected (= selected-drawtool :comments))
-                :on-click toggle-comments
-                :data-tool "comments"
-                :style {:position "relative"}}
-       i/comments
-       (when ^boolean has-unread-comments?
-         [:div {:class (stl/css :unread)}])]]
+     [:div {:class (stl/css :comments-button-wrapper)}
+      [:> icon-button* {:variant "ghost"
+                        :aria-pressed (= selected-drawtool :comments)
+                        :aria-label (tr "workspace.toolbar.comments" (sc/get-tooltip :add-comment))
+                        :on-click toggle-comments
+                        :icon i/comments}]
+      (when ^boolean has-unread-comments?
+        [:div {:class (stl/css :unread)}])]
 
      (when-not ^boolean read-only?
-       [:div {:class (stl/css :history-section)}
-        [:button
-         {:title (tr "workspace.sidebar.history")
-          :aria-label (tr "workspace.sidebar.history")
-          :class (stl/css-case :selected (contains? layout :document-history)
-                               :history-button true)
-          :on-click toggle-history}
-         i/history]])
+       [:> icon-button* {:variant "ghost"
+                         :aria-pressed (contains? layout :document-history)
+                         :aria-label (tr "workspace.sidebar.history")
+                         :on-click toggle-history
+                         :icon i/history}])
 
-;;      (when display-share-button?
-;;        [:a {:class (stl/css :viewer-btn)
-;;             :title (tr "workspace.header.share")
-;;             :on-click open-share-dialog}
-;;         i/share])
-
-;;      [:a {:class (stl/css :viewer-btn)
-;;           :title (tr "workspace.header.viewer" (sc/get-tooltip :open-viewer))
-;;           :on-click nav-to-viewer}
-;;       i/play]
-      ]))
-
+]))

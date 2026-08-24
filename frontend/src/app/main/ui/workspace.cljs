@@ -27,16 +27,16 @@
    [app.main.ui.workspace.coordinates :as coordinates]
    [app.main.ui.workspace.libraries]
    [app.main.ui.workspace.nudge]
-   [app.main.ui.workspace.palette :refer [palette]]
+   [app.main.ui.workspace.palette :refer [palette*]]
    [app.main.ui.workspace.plugins]
-   [app.main.ui.workspace.sidebar :refer [left-sidebar* right-sidebar*]]
-   [app.main.ui.workspace.sidebar.collapsable-button :refer [collapsed-button]]
+   [app.main.ui.workspace.sidebar :refer [sidebar*]]
    [app.main.ui.workspace.sidebar.history :refer [history-toolbox*]]
    [app.main.ui.workspace.tokens.export]
    [app.main.ui.workspace.tokens.export.modal]
    [app.main.ui.workspace.tokens.import]
    [app.main.ui.workspace.tokens.import.modal]
-   [app.main.ui.workspace.tokens.management.create.modals]
+   [app.main.ui.workspace.tokens.management.forms.modals]
+   [app.main.ui.workspace.tokens.remapping-modal]
    [app.main.ui.workspace.tokens.settings]
    [app.main.ui.workspace.tokens.themes.create-modal]
    [app.main.ui.workspace.viewport :refer [viewport*]]
@@ -85,8 +85,8 @@
         node-ref (use-resize-observer on-resize)]
     [:*
      (when (not ^boolean hide-ui?)
-       [:& palette {:layout layout
-                    :on-change-palette-size on-resize-palette}])
+       [:> palette* {:layout layout
+                     :on-change-size on-resize-palette}])
 
      [:section
       {:key (dm/str "workspace-" page-id)
@@ -114,18 +114,14 @@
            @palete-size)}]]]
 
      (when-not hide-ui?
-       [:*
-        (if (:collapse-left-sidebar layout)
-          [:& collapsed-button]
-          [:> left-sidebar* {:layout layout
-                             :file file
-                             :page-id page-id}])
-        [:> right-sidebar* {:section options-mode
-                            :selected selected
-                            :drawing-tool (get drawing :tool)
-                            :layout layout
-                            :file file
-                            :page-id page-id}]])]))
+       [:> sidebar* {:layout layout
+                     ;; FIXME
+                     :file-id (get file :id)
+                     :page-id page-id
+                     :file file
+                     :selected selected
+                     :section options-mode
+                     :drawing-tool (get drawing :tool)}])]))
 
 (mf/defc workspace-loader*
   {::mf/private true}
@@ -170,7 +166,7 @@
                    (dsh/lookup-page state file-id page-id))))
              st/state))
 
-(mf/defc workspace-page*
+(mf/defc workspace-inner*
   {::mf/private true}
   [{:keys [page-id file-id file layout wglobal]}]
   (let [page-ref (mf/with-memo [file-id page-id]
@@ -222,6 +218,10 @@
 
         design-tokens?   (features/use-feature "design-tokens/v1")
 
+        wasm-renderer-enabled? (features/use-feature "render-wasm/v1")
+
+        first-frame-rendered?  (mf/use-state false)
+
         background-color (:background-color wglobal)]
 
     (mf/with-effect []
@@ -246,6 +246,17 @@
       (when (and file-loaded? (not page-id))
         (st/emit! (dcm/go-to-workspace :file-id file-id ::rt/replace true))))
 
+    (mf/with-effect [file-id page-id]
+      (reset! first-frame-rendered? false))
+
+    (mf/with-effect []
+      (let [handle-wasm-render
+            (fn [_]
+              (reset! first-frame-rendered? true))
+            listener-key (events/listen globals/document "penpot:wasm:render" handle-wasm-render)]
+        (fn []
+          (events/unlistenByKey listener-key))))
+
     [:> (mf/provider ctx/current-project-id) {:value project-id}
      [:> (mf/provider ctx/current-file-id) {:value file-id}
       [:> (mf/provider ctx/current-page-id) {:value page-id}
@@ -254,13 +265,26 @@
          [:> modal-container*]
          [:section {:class (stl/css :workspace)
                     :style {:background-color background-color
-                            :touch-action "none"}}
+                            :touch-action "none"
+                            :position "relative"}}
           [:> context-menu*]
-          (if (and file-loaded? page-id)
-            [:> workspace-page*
+          (when (and file-loaded? page-id)
+            [:> workspace-inner*
              {:page-id page-id
               :file-id file-id
               :file file
               :wglobal wglobal
-              :layout layout}]
+              :layout layout}])
+          (when (or (not (and file-loaded? page-id))
+                    ;; in wasm renderer, extend the pixel loader until the first frame is rendered
+                    ;; but do not apply it when switching pages
+                    (and wasm-renderer-enabled?
+                         (not file-loaded?)
+                         (not @first-frame-rendered?)))
             [:> workspace-loader*])]]]]]]))
+
+(mf/defc workspace-page*
+  {::mf/lazy-load true}
+  [props]
+  [:> workspace* props])
+

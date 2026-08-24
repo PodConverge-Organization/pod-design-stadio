@@ -48,6 +48,9 @@
    (when *assert*
      ["/debug/icons-preview" :debug-icons-preview])
 
+   (when *assert*
+     ["/debug/playground" :debug-playground])
+
    ;; Used for export
    ["/render-sprite/:file-id" :render-sprite]
 
@@ -61,7 +64,8 @@
     ["/fonts"                :dashboard-fonts]
     ["/fonts/providers"      :dashboard-font-providers]
     ["/libraries"            :dashboard-libraries]
-    ["/files"                :dashboard-files]]
+    ["/files"                :dashboard-files]
+    ["/deleted" :dashboard-deleted]]
 
    ["/dashboard/team/:team-id"
     ["/members"              :dashboard-legacy-team-members]
@@ -78,6 +82,16 @@
    ["/workspace" :workspace]
    ["/workspace/:project-id/:file-id" :workspace-legacy]])
 
+
+(defn route-name-for-path
+  [path]
+  (some-> (rt/create routes)
+          (rt/match path)
+          (dm/get-in [:data :name])))
+
+(defn current-route-name
+  []
+  (route-name-for-path (rt/get-current-path)))
 
 (defn- store-session-params
   [{:keys [template plugin]}]

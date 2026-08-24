@@ -4,23 +4,23 @@
 //
 // Copyright (c) KALEIDOS INC
 
-@import "refactor/common-refactor.scss";
+@use "refactor/common-refactor.scss" as deprecated;
 
 .workspace-header-right {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  min-width: $s-256;
-  padding: $s-8;
-  gap: $s-8;
+  min-width: deprecated.$s-256;
+  padding: deprecated.$s-8 deprecated.$s-12;
+  gap: deprecated.$s-4;
   background-color: var(--panel-background-color);
 }
 
 .users-section {
   position: relative;
-  min-width: $s-32;
-  max-width: $s-72;
-  padding: $s-4 $s-6;
+  min-width: deprecated.$s-32;
+  max-width: deprecated.$s-72;
+  padding: deprecated.$s-4 deprecated.$s-6;
 }
 
 .separator {
@@ -28,19 +28,14 @@
 }
 
 .zoom-widget {
-  @include buttonStyle;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: $s-28;
-  max-width: $s-48;
-  width: $s-48;
-  border-radius: $br-8;
+  width: deprecated.$s-48;
+  height: deprecated.$s-32;
 
   .label {
-    @include bodySmallTypography;
-    height: 100%;
-    padding: $s-8 0;
+    @include deprecated.bodySmallTypography;
     color: var(--button-tertiary-foreground-color-rest);
   }
 
@@ -59,15 +54,15 @@
 
 .dropdown {
   @extend .menu-dropdown;
-  right: $s-2;
-  top: calc($s-2 + $s-48);
-  width: $s-272;
+  right: deprecated.$s-2;
+  top: calc(deprecated.$s-2 + deprecated.$s-48);
+  width: deprecated.$s-272;
 }
 
 .basic-zoom-bar {
   display: flex;
   justify-content: space-between;
-  padding: $s-6;
+  padding: deprecated.$s-6;
   cursor: auto;
 }
 
@@ -76,19 +71,12 @@
 }
 
 .zoom-text {
-  @include flexCenter;
+  @include deprecated.flexCenter;
   height: 100%;
-  min-width: $s-48;
+  min-width: deprecated.$s-48;
   padding: 0;
-  margin: 0 $s-2;
+  margin: 0 deprecated.$s-2;
   color: var(--modal-title-foreground-color);
-}
-
-.reset-btn {
-  @extend .button-tertiary;
-  color: var(--button-tertiary-foreground-color-hover);
-  height: $s-28;
-  border-radius: $br-8;
 }
 
 .zoom-option {
@@ -113,127 +101,11 @@
   }
 }
 
-.comments-btn {
-  @extend .button-tertiary;
-  border-radius: $br-8;
-  margin: 0;
-  height: $s-28;
-  width: $s-28;
-  border: none;
-
-  svg {
-    @extend .button-icon;
-    stroke: var(--icon-foreground);
-    height: $s-16;
-    width: $s-16;
-  }
-
-  &:hover {
-    background-color: transparent;
-    border: none;
-  }
-
-  &.selected {
-    background-color: var(--button-tertiary-background-color-selected);
-
-    svg {
-      stroke: var(--button-tertiary-foreground-color-active);
-    }
-  }
+.comments-button-wrapper {
+  position: relative;
 }
 
-.history-button {
-  @extend .button-tertiary;
-  border-radius: $br-8;
-  margin: 0;
-  height: $s-28;
-  width: $s-28;
-  border: none;
-
-  svg {
-    @extend .button-icon;
-    stroke: var(--icon-foreground);
-    height: $s-16;
-    width: $s-16;
-  }
-
-  &:hover {
-    background-color: transparent;
-    border: none;
-  }
-
-  &.selected {
-    background-color: var(--button-tertiary-background-color-selected);
-
-    svg {
-      stroke: var(--button-tertiary-foreground-color-active);
-    }
-  }
-}
-
-.persistence-status-widget {
-  @include flexCenter;
-  width: $s-28;
-  height: $s-28;
-}
-
-.status-icon {
-  @include flexCenter;
-  width: $s-24;
-  height: $s-24;
-  margin: 0;
-  border-radius: $br-circle;
-
-  svg {
-    @extend .button-icon;
-    stroke: var(--status-widget-icon-foreground-color);
-  }
-}
-
-.pending-status {
-  background-color: var(--status-widget-background-color-warning);
-}
-
-.saving-status {
-  background-color: var(--status-widget-background-color-pending);
-
-  svg {
-    animation: spin-animation 1s infinite;
-    animation-timing-function: linear;
-  }
-}
-
-.saved-status {
-  background-color: var(--status-widget-background-color-success);
-}
-
-.error-status {
-  background-color: var(--status-widget-background-color-error);
-}
-
-.share-btn,
-.viewer-btn {
-  @extend .button-tertiary;
-  border-radius: $br-8;
-  margin: 0;
-  width: $s-28;
-  height: $s-28;
-  border: none;
-
-  svg {
-    @extend .button-icon;
-    height: $s-16;
-    width: $s-16;
-    stroke: var(--icon-foreground);
-  }
-
-  &:hover {
-    background-color: transparent;
-    border: none;
-  }
-}
-
-.unread {
+.comments-button-unread {
   position: absolute;
   width: 8px;
   height: 8px;

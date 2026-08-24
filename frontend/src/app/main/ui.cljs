@@ -18,6 +18,7 @@
    [app.main.store :as st]
    [app.main.ui.context :as ctx]
    [app.main.ui.debug.icons-preview :refer [icons-preview]]
+   [app.main.ui.debug.playground :refer [playground]]
    [app.main.ui.ds.product.loader :refer [loader*]]
    [app.main.ui.error-boundary :refer [error-boundary*]]
    [app.main.ui.exports.files]
@@ -30,27 +31,28 @@
    [app.main.ui.static :as static]
    [app.util.dom :as dom]
    [app.util.i18n :refer [tr]]
+   [app.util.modules :as mod]
    [app.util.theme :as theme]
    [beicon.v2.core :as rx]
    [rumext.v2 :as mf]))
 
 (def auth-page
-  (mf/lazy-component app.main.ui.auth/auth))
+  (mf/lazy #(mod/load 'app.main.ui.auth/auth-page*)))
 
-(def verify-token-page
-  (mf/lazy-component app.main.ui.auth.verify-token/verify-token))
+(def verify-token-page*
+  (mf/lazy #(mod/load 'app.main.ui.auth.verify-token/verify-token-page*)))
 
-(def viewer-page
-  (mf/lazy-component app.main.ui.viewer/viewer*))
+(def viewer-page*
+  (mf/lazy #(mod/load 'app.main.ui.viewer/viewer-page*)))
 
-(def dashboard-page
-  (mf/lazy-component app.main.ui.dashboard/dashboard*))
+(def dashboard-page*
+  (mf/lazy #(mod/load 'app.main.ui.dashboard/dashboard-page*)))
 
-(def settings-page
-  (mf/lazy-component app.main.ui.settings/settings))
+(def settings-page*
+  (mf/lazy #(mod/load 'app.main.ui.settings/settings-page*)))
 
-(def workspace-page
-  (mf/lazy-component app.main.ui.workspace/workspace*))
+(def workspace-page*
+  (mf/lazy #(mod/load 'app.main.ui.workspace/workspace-page*)))
 
 (mf/defc workspace-legacy-redirect*
   {::mf/props :obj
@@ -188,7 +190,7 @@
        [:? [:& auth-page {:route route}]]
 
        :auth-verify-token
-       [:? [:& verify-token-page {:route route}]]
+       [:? [:& verify-token-page* {:route route}]]
 
        (:settings-profile
         :settings-password
@@ -197,11 +199,21 @@
         :settings-subscription
         :settings-access-tokens
         :settings-notifications)
-       [:? [:& settings-page {:route route}]]
+       (let [params (get params :query)
+             error-report-id (some-> params :error-report-id uuid/parse*)]
+         [:? [:> settings-page*
+              {:route route
+               :type (get params :type)
+               :error-report-id error-report-id
+               :error-href (get params :error-href)}]])
 
        :debug-icons-preview
        (when *assert*
          [:& icons-preview])
+
+       :debug-playground
+       (when *assert*
+         [:& playground])
 
        (:dashboard-search
         :dashboard-recent
@@ -212,7 +224,8 @@
         :dashboard-members
         :dashboard-invitations
         :dashboard-webhooks
-        :dashboard-settings)
+        :dashboard-settings
+        :dashboard-deleted)
        (let [params        (get params :query)
              team-id       (some-> params :team-id uuid/parse*)
              project-id    (some-> params :project-id uuid/parse*)
@@ -239,13 +252,13 @@
             [:& release-notes-modal {:version (:main cf/version)}])
 
           [:> team-container* {:team-id team-id}
-           [:> dashboard-page {:profile profile
-                               :section section
-                               :team-id team-id
-                               :search-term search-term
-                               :plugin-url plugin-url
-                               :project-id project-id
-                               :template template}]]])
+           [:> dashboard-page* {:profile profile
+                                :section section
+                                :team-id team-id
+                                :search-term search-term
+                                :plugin-url plugin-url
+                                :project-id project-id
+                                :template template}]]])
 
        :workspace
        (let [params     (get params :query)
@@ -266,11 +279,11 @@
               [:& release-notes-modal {:version (:main cf/version)}]))
 
           [:> team-container* {:team-id team-id}
-           [:> workspace-page {:team-id team-id
-                               :file-id file-id
-                               :page-id page-id
-                               :layout-name layout
-                               :key file-id}]]])
+           [:> workspace-page* {:team-id team-id
+                                :file-id file-id
+                                :page-id page-id
+                                :layout-name layout
+                                :key file-id}]]])
 
        :viewer
        (let [params   (get params :query)
@@ -287,7 +300,7 @@
              share    (:share params)]
 
          [:? {}
-          [:> viewer-page
+          [:> viewer-page*
            {:page-id page-id
             :file-id file-id
             :frame-id frame-id
@@ -369,7 +382,7 @@
      [:& (mf/provider ctx/current-profile) {:value profile}
       (if edata
         [:> static/exception-page* {:data edata :route route}]
-        [:> error-boundary* {:fallback static/internal-error*}
+        [:> error-boundary* {:fallback static/exception-page*}
          [:> notifications/current-notification*]
          (when route
            [:> page* {:route route :profile profile}])])]]))

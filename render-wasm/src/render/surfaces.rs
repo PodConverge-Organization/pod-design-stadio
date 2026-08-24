@@ -6,10 +6,10 @@ use skia_safe::{self as skia, IRect, Paint, RRect};
 use super::{gpu_state::GpuState, tiles::Tile, tiles::TileViewbox, tiles::TILE_SIZE};
 
 use base64::{engine::general_purpose, Engine as _};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-const TEXTURES_CACHE_CAPACITY: usize = 512;
-const TEXTURES_BATCH_DELETE: usize = 32;
+const TEXTURES_CACHE_CAPACITY: usize = 1024;
+const TEXTURES_BATCH_DELETE: usize = 256;
 // This is the amount of extra space we're going to give to all the surfaces to render shapes.
 // If it's too big it could affect performance.
 const TILE_SIZE_MULTIPLIER: i32 = 2;
@@ -17,20 +17,23 @@ const TILE_SIZE_MULTIPLIER: i32 = 2;
 #[repr(u32)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum SurfaceId {
-    Target = 0b0_0000_0001,
-    Cache = 0b0_0000_0010,
-    Current = 0b0_0000_0100,
-    Fills = 0b0_0000_1000,
-    Strokes = 0b0_0001_0000,
-    DropShadows = 0b0_0010_0000,
-    InnerShadows = 0b0_0100_0000,
-    UI = 0b0_1000_0000,
-    Debug = 0b1_0000_0000,
+    Target = 0b00_0000_0001,
+    Filter = 0b00_0000_0010,
+    Cache = 0b00_0000_0100,
+    Current = 0b00_0000_1000,
+    Fills = 0b00_0001_0000,
+    Strokes = 0b00_0010_0000,
+    DropShadows = 0b00_0100_0000,
+    InnerShadows = 0b00_1000_0000,
+    TextDropShadows = 0b01_0000_0000,
+    UI = 0b10_0000_0000,
+    Debug = 0b10_0000_0001,
 }
 
 pub struct Surfaces {
     // is the final destination surface, the one that it is represented in the canvas element.
     target: skia::Surface,
+    filter: skia::Surface,
     cache: skia::Surface,
     // keeps the current render
     current: skia::Surface,
@@ -42,6 +45,8 @@ pub struct Surfaces {
     drop_shadows: skia::Surface,
     // used for rendering over shadows.
     inner_shadows: skia::Surface,
+    // used for rendering text drop shadows
+    text_drop_shadows: skia::Surface,
     // used for displaying auxiliary workspace elements
     ui: skia::Surface,
     // for drawing debug info.
@@ -50,6 +55,8 @@ pub struct Surfaces {
     tiles: TileTextureCache,
     sampling_options: skia::SamplingOptions,
     margins: skia::ISize,
+    // Tracks which surfaces have content (dirty flag bitmask)
+    dirty_surfaces: u32,
 }
 
 #[allow(dead_code)]
@@ -67,12 +74,15 @@ impl Surfaces {
         let margins = skia::ISize::new(extra_tile_dims.width / 4, extra_tile_dims.height / 4);
 
         let target = gpu_state.create_target_surface(width, height);
+        let filter = gpu_state.create_surface_with_dimensions("filter".to_string(), width, height);
         let cache = gpu_state.create_surface_with_dimensions("cache".to_string(), width, height);
         let current = gpu_state.create_surface_with_isize("current".to_string(), extra_tile_dims);
         let drop_shadows =
             gpu_state.create_surface_with_isize("drop_shadows".to_string(), extra_tile_dims);
         let inner_shadows =
             gpu_state.create_surface_with_isize("inner_shadows".to_string(), extra_tile_dims);
+        let text_drop_shadows =
+            gpu_state.create_surface_with_isize("text_drop_shadows".to_string(), extra_tile_dims);
         let shape_fills =
             gpu_state.create_surface_with_isize("shape_fills".to_string(), extra_tile_dims);
         let shape_strokes =
@@ -84,10 +94,12 @@ impl Surfaces {
         let tiles = TileTextureCache::new();
         Surfaces {
             target,
+            filter,
             cache,
             current,
             drop_shadows,
             inner_shadows,
+            text_drop_shadows,
             shape_fills,
             shape_strokes,
             ui,
@@ -95,7 +107,12 @@ impl Surfaces {
             tiles,
             sampling_options,
             margins,
+            dirty_surfaces: 0,
         }
+    }
+
+    pub fn clear_tiles(&mut self) {
+        self.tiles.clear();
     }
 
     pub fn resize(&mut self, gpu_state: &mut GpuState, new_width: i32, new_height: i32) {
@@ -105,6 +122,10 @@ impl Surfaces {
     pub fn snapshot(&mut self, id: SurfaceId) -> skia::Image {
         let surface = self.get_mut(id);
         surface.image_snapshot()
+    }
+
+    pub fn filter_size(&self) -> (i32, i32) {
+        (self.filter.width(), self.filter.height())
     }
 
     pub fn base64_snapshot(&mut self, id: SurfaceId) -> String {
@@ -129,8 +150,53 @@ impl Surfaces {
         None
     }
 
+    /// Returns a mutable reference to the canvas and automatically marks
+    /// render surfaces as dirty when accessed. This tracks which surfaces
+    /// have content for optimization purposes.
+    pub fn canvas_and_mark_dirty(&mut self, id: SurfaceId) -> &skia::Canvas {
+        // Automatically mark render surfaces as dirty when accessed
+        // This tracks which surfaces have content for optimization
+        match id {
+            SurfaceId::Fills
+            | SurfaceId::Strokes
+            | SurfaceId::InnerShadows
+            | SurfaceId::TextDropShadows => {
+                self.mark_dirty(id);
+            }
+            _ => {}
+        }
+        self.canvas(id)
+    }
+
+    /// Returns a mutable reference to the canvas without any side effects.
+    /// Use this when you only need to read or manipulate the canvas state
+    /// without marking the surface as dirty.
     pub fn canvas(&mut self, id: SurfaceId) -> &skia::Canvas {
         self.get_mut(id).canvas()
+    }
+
+    pub fn surface_clone(&self, id: SurfaceId) -> skia::Surface {
+        self.get(id).clone()
+    }
+
+    /// Marks a surface as having content (dirty)
+    pub fn mark_dirty(&mut self, id: SurfaceId) {
+        self.dirty_surfaces |= id as u32;
+    }
+
+    /// Checks if a surface has content
+    pub fn is_dirty(&self, id: SurfaceId) -> bool {
+        (self.dirty_surfaces & id as u32) != 0
+    }
+
+    /// Clears the dirty flag for a surface or set of surfaces
+    pub fn clear_dirty(&mut self, ids: u32) {
+        self.dirty_surfaces &= !ids;
+    }
+
+    /// Clears all dirty flags
+    pub fn clear_all_dirty(&mut self) {
+        self.dirty_surfaces = 0;
     }
 
     pub fn flush_and_submit(&mut self, gpu_state: &mut GpuState, id: SurfaceId) {
@@ -141,15 +207,33 @@ impl Surfaces {
     pub fn draw_into(&mut self, from: SurfaceId, to: SurfaceId, paint: Option<&skia::Paint>) {
         let sampling_options = self.sampling_options;
 
-        self.get_mut(from)
-            .clone()
-            .draw(self.canvas(to), (0.0, 0.0), sampling_options, paint);
+        self.get_mut(from).clone().draw(
+            self.canvas_and_mark_dirty(to),
+            (0.0, 0.0),
+            sampling_options,
+            paint,
+        );
+    }
+
+    /// Draws the cache surface directly to the target canvas.
+    /// This avoids creating an intermediate snapshot, reducing GPU stalls.
+    pub fn draw_cache_to_target(&mut self) {
+        let sampling_options = self.sampling_options;
+        self.cache.clone().draw(
+            self.target.canvas(),
+            (0.0, 0.0),
+            sampling_options,
+            Some(&skia::Paint::default()),
+        );
     }
 
     pub fn apply_mut(&mut self, ids: u32, mut f: impl FnMut(&mut skia::Surface)) {
         performance::begin_measure!("apply_mut::flags");
         if ids & SurfaceId::Target as u32 != 0 {
             f(self.get_mut(SurfaceId::Target));
+        }
+        if ids & SurfaceId::Filter as u32 != 0 {
+            f(self.get_mut(SurfaceId::Filter));
         }
         if ids & SurfaceId::Current as u32 != 0 {
             f(self.get_mut(SurfaceId::Current));
@@ -166,6 +250,9 @@ impl Surfaces {
         if ids & SurfaceId::InnerShadows as u32 != 0 {
             f(self.get_mut(SurfaceId::InnerShadows));
         }
+        if ids & SurfaceId::TextDropShadows as u32 != 0 {
+            f(self.get_mut(SurfaceId::TextDropShadows));
+        }
         if ids & SurfaceId::DropShadows as u32 != 0 {
             f(self.get_mut(SurfaceId::DropShadows));
         }
@@ -175,32 +262,58 @@ impl Surfaces {
         performance::begin_measure!("apply_mut::flags");
     }
 
-    pub fn update_render_context(&mut self, render_area: skia::Rect, scale: f32) {
-        let translation = (
+    pub fn get_render_context_translation(
+        &mut self,
+        render_area: skia::Rect,
+        scale: f32,
+    ) -> (f32, f32) {
+        (
             -render_area.left() + self.margins.width as f32 / scale,
             -render_area.top() + self.margins.height as f32 / scale,
-        );
-        self.apply_mut(
-            SurfaceId::Fills as u32
-                | SurfaceId::Strokes as u32
-                | SurfaceId::DropShadows as u32
-                | SurfaceId::InnerShadows as u32,
-            |s| {
-                s.canvas().restore();
-                s.canvas().save();
-                s.canvas().translate(translation);
-            },
-        );
+        )
+    }
+
+    pub fn update_render_context(&mut self, render_area: skia::Rect, scale: f32) {
+        let translation = self.get_render_context_translation(render_area, scale);
+
+        // When context changes (zoom/pan/tile), clear all render surfaces first
+        // to remove any residual content from previous tiles, then mark as dirty
+        // so they get redrawn with new transformations
+        let surface_ids = SurfaceId::Fills as u32
+            | SurfaceId::Strokes as u32
+            | SurfaceId::InnerShadows as u32
+            | SurfaceId::TextDropShadows as u32;
+
+        // Clear surfaces before updating transformations to remove residual content
+        self.apply_mut(surface_ids, |s| {
+            s.canvas().clear(skia::Color::TRANSPARENT);
+        });
+
+        // Mark all render surfaces as dirty so they get redrawn
+        self.mark_dirty(SurfaceId::Fills);
+        self.mark_dirty(SurfaceId::Strokes);
+        self.mark_dirty(SurfaceId::InnerShadows);
+        self.mark_dirty(SurfaceId::TextDropShadows);
+
+        // Update transformations
+        self.apply_mut(surface_ids, |s| {
+            let canvas = s.canvas();
+            canvas.reset_matrix();
+            canvas.scale((scale, scale));
+            canvas.translate(translation);
+        });
     }
 
     #[inline]
     fn get_mut(&mut self, id: SurfaceId) -> &mut skia::Surface {
         match id {
             SurfaceId::Target => &mut self.target,
+            SurfaceId::Filter => &mut self.filter,
             SurfaceId::Cache => &mut self.cache,
             SurfaceId::Current => &mut self.current,
             SurfaceId::DropShadows => &mut self.drop_shadows,
             SurfaceId::InnerShadows => &mut self.inner_shadows,
+            SurfaceId::TextDropShadows => &mut self.text_drop_shadows,
             SurfaceId::Fills => &mut self.shape_fills,
             SurfaceId::Strokes => &mut self.shape_strokes,
             SurfaceId::Debug => &mut self.debug,
@@ -208,21 +321,33 @@ impl Surfaces {
         }
     }
 
+    fn get(&self, id: SurfaceId) -> &skia::Surface {
+        match id {
+            SurfaceId::Target => &self.target,
+            SurfaceId::Filter => &self.filter,
+            SurfaceId::Cache => &self.cache,
+            SurfaceId::Current => &self.current,
+            SurfaceId::DropShadows => &self.drop_shadows,
+            SurfaceId::InnerShadows => &self.inner_shadows,
+            SurfaceId::TextDropShadows => &self.text_drop_shadows,
+            SurfaceId::Fills => &self.shape_fills,
+            SurfaceId::Strokes => &self.shape_strokes,
+            SurfaceId::Debug => &self.debug,
+            SurfaceId::UI => &self.ui,
+        }
+    }
+
     fn reset_from_target(&mut self, target: skia::Surface) {
         let dim = (target.width(), target.height());
         self.target = target;
+        self.filter = self.target.new_surface_with_dimensions(dim).unwrap();
         self.debug = self.target.new_surface_with_dimensions(dim).unwrap();
         self.ui = self.target.new_surface_with_dimensions(dim).unwrap();
         // The rest are tile size surfaces
     }
 
-    pub fn resize_cache(
-        &mut self,
-        gpu_state: &mut GpuState,
-        cache_dims: skia::ISize,
-        interest_area_threshold: i32,
-    ) {
-        self.cache = gpu_state.create_surface_with_isize("cache".to_string(), cache_dims);
+    pub fn resize_cache(&mut self, cache_dims: skia::ISize, interest_area_threshold: i32) {
+        self.cache = self.target.new_surface_with_dimensions(cache_dims).unwrap();
         self.cache.canvas().reset_matrix();
         self.cache.canvas().translate((
             (interest_area_threshold as f32 * TILE_SIZE),
@@ -233,34 +358,36 @@ impl Surfaces {
     pub fn draw_rect_to(&mut self, id: SurfaceId, shape: &Shape, paint: &Paint) {
         if let Some(corners) = shape.shape_type.corners() {
             let rrect = RRect::new_rect_radii(shape.selrect, &corners);
-            self.canvas(id).draw_rrect(rrect, paint);
+            self.canvas_and_mark_dirty(id).draw_rrect(rrect, paint);
         } else {
-            self.canvas(id).draw_rect(shape.selrect, paint);
+            self.canvas_and_mark_dirty(id)
+                .draw_rect(shape.selrect, paint);
         }
     }
 
     pub fn draw_circle_to(&mut self, id: SurfaceId, shape: &Shape, paint: &Paint) {
-        self.canvas(id).draw_oval(shape.selrect, paint);
+        self.canvas_and_mark_dirty(id)
+            .draw_oval(shape.selrect, paint);
     }
 
     pub fn draw_path_to(&mut self, id: SurfaceId, shape: &Shape, paint: &Paint) {
         if let Some(path) = shape.get_skia_path() {
-            self.canvas(id).draw_path(&path, paint);
+            self.canvas_and_mark_dirty(id).draw_path(&path, paint);
         }
     }
 
     pub fn reset(&mut self, color: skia::Color) {
         self.canvas(SurfaceId::Fills).restore_to_count(1);
-        self.canvas(SurfaceId::DropShadows).restore_to_count(1);
         self.canvas(SurfaceId::InnerShadows).restore_to_count(1);
+        self.canvas(SurfaceId::TextDropShadows).restore_to_count(1);
         self.canvas(SurfaceId::Strokes).restore_to_count(1);
         self.canvas(SurfaceId::Current).restore_to_count(1);
         self.apply_mut(
             SurfaceId::Fills as u32
                 | SurfaceId::Strokes as u32
                 | SurfaceId::Current as u32
-                | SurfaceId::DropShadows as u32
-                | SurfaceId::InnerShadows as u32,
+                | SurfaceId::InnerShadows as u32
+                | SurfaceId::TextDropShadows as u32,
             |s| {
                 s.canvas().clear(color).reset_matrix();
             },
@@ -273,6 +400,9 @@ impl Surfaces {
         self.canvas(SurfaceId::UI)
             .clear(skia::Color::TRANSPARENT)
             .reset_matrix();
+
+        // Clear all dirty flags after reset
+        self.clear_all_dirty();
     }
 
     pub fn cache_current_tile_texture(
@@ -288,69 +418,138 @@ impl Surfaces {
             self.current.height() - TILE_SIZE_MULTIPLIER * self.margins.height,
         );
 
-        if let Some(snapshot) = self.current.image_snapshot_with_bounds(rect) {
-            self.tiles.add(tile_viewbox, tile, snapshot.clone());
+        let snapshot = self.current.image_snapshot();
+        let mut direct_context = self.current.direct_context();
+        let tile_image_opt = snapshot
+            .make_subset(direct_context.as_mut(), rect)
+            .or_else(|| self.current.image_snapshot_with_bounds(rect));
+
+        if let Some(tile_image) = tile_image_opt {
+            // Draw to cache first (takes reference), then move to tile cache
             self.cache.canvas().draw_image_rect(
-                snapshot.clone(),
+                &tile_image,
                 None,
                 tile_rect,
                 &skia::Paint::default(),
             );
+
+            self.tiles.add(tile_viewbox, tile, tile_image);
         }
     }
 
-    pub fn has_cached_tile_surface(&mut self, tile: Tile) -> bool {
+    pub fn has_cached_tile_surface(&self, tile: Tile) -> bool {
         self.tiles.has(tile)
     }
 
-    pub fn remove_cached_tile_surface(
-        &mut self,
-        tile: Tile,
-        rect: skia::Rect,
-        color: skia::Color,
-    ) -> bool {
-        // Clear the specific tile area in the cache surface with color
-        let mut paint = skia::Paint::default();
-        paint.set_color(color);
-        self.cache.canvas().draw_rect(rect, &paint);
-        self.tiles.remove(tile)
+    pub fn remove_cached_tile_surface(&mut self, tile: Tile) {
+        // Mark tile as invalid
+        // Old content stays visible until new tile overwrites it atomically,
+        // preventing flickering during tile re-renders.
+        self.tiles.remove(tile);
     }
 
     pub fn draw_cached_tile_surface(&mut self, tile: Tile, rect: skia::Rect, color: skia::Color) {
-        let image = self.tiles.get(tile).unwrap();
+        if let Some(image) = self.tiles.get(tile) {
+            let mut paint = skia::Paint::default();
+            paint.set_color(color);
 
+            self.target.canvas().draw_rect(rect, &paint);
+
+            self.target
+                .canvas()
+                .draw_image_rect(&image, None, rect, &skia::Paint::default());
+        }
+    }
+
+    /// Draws the current tile directly to the target and cache surfaces without
+    /// creating a snapshot. This avoids GPU stalls from ReadPixels but doesn't
+    /// populate the tile texture cache (suitable for one-shot renders like tests).
+    pub fn draw_current_tile_direct(&mut self, tile_rect: &skia::Rect, color: skia::Color) {
+        let sampling_options = self.sampling_options;
+        let src_rect = IRect::from_xywh(
+            self.margins.width,
+            self.margins.height,
+            self.current.width() - TILE_SIZE_MULTIPLIER * self.margins.width,
+            self.current.height() - TILE_SIZE_MULTIPLIER * self.margins.height,
+        );
+        let src_rect_f = skia::Rect::from(src_rect);
+
+        // Draw background
         let mut paint = skia::Paint::default();
         paint.set_color(color);
+        self.target.canvas().draw_rect(tile_rect, &paint);
 
-        self.target.canvas().draw_rect(rect, &paint);
+        // Draw current surface directly to target (no snapshot)
+        self.current.clone().draw(
+            self.target.canvas(),
+            (
+                tile_rect.left - src_rect_f.left,
+                tile_rect.top - src_rect_f.top,
+            ),
+            sampling_options,
+            None,
+        );
 
-        self.target
-            .canvas()
-            .draw_image_rect(&image, None, rect, &skia::Paint::default());
+        // Also draw to cache for render_from_cache
+        self.current.clone().draw(
+            self.cache.canvas(),
+            (
+                tile_rect.left - src_rect_f.left,
+                tile_rect.top - src_rect_f.top,
+            ),
+            sampling_options,
+            None,
+        );
     }
 
     pub fn remove_cached_tiles(&mut self, color: skia::Color) {
         self.tiles.clear();
         self.cache.canvas().clear(color);
     }
+
+    pub fn gc(&mut self) {
+        self.tiles.gc();
+    }
 }
 
 pub struct TileTextureCache {
     grid: HashMap<Tile, skia::Image>,
+    removed: HashSet<Tile>,
 }
 
 impl TileTextureCache {
     pub fn new() -> Self {
         Self {
-            grid: HashMap::new(),
+            grid: HashMap::default(),
+            removed: HashSet::default(),
         }
     }
 
-    pub fn has(&mut self, tile: Tile) -> bool {
-        self.grid.contains_key(&tile)
+    pub fn has(&self, tile: Tile) -> bool {
+        self.grid.contains_key(&tile) && !self.removed.contains(&tile)
     }
 
-    fn remove_list(&mut self, marked: Vec<Tile>) {
+    fn gc(&mut self) {
+        // Make a real remove
+        for tile in self.removed.iter() {
+            self.grid.remove(tile);
+        }
+    }
+
+    fn free_tiles(&mut self, tile_viewbox: &TileViewbox) {
+        let marked: Vec<_> = self
+            .grid
+            .iter_mut()
+            .filter_map(|(tile, _)| {
+                if !tile_viewbox.is_visible(tile) {
+                    Some(*tile)
+                } else {
+                    None
+                }
+            })
+            .take(TEXTURES_BATCH_DELETE)
+            .collect();
+
         for tile in marked.iter() {
             self.grid.remove(tile);
         }
@@ -358,37 +557,35 @@ impl TileTextureCache {
 
     pub fn add(&mut self, tile_viewbox: &TileViewbox, tile: &Tile, image: skia::Image) {
         if self.grid.len() > TEXTURES_CACHE_CAPACITY {
-            let marked: Vec<_> = self
-                .grid
-                .iter_mut()
-                .filter_map(|(tile, _)| {
-                    if !tile_viewbox.is_visible(tile) {
-                        Some(*tile)
-                    } else {
-                        None
-                    }
-                })
-                .take(TEXTURES_BATCH_DELETE)
-                .collect();
-            self.remove_list(marked);
+            // First we try to remove the obsolete tiles
+            self.gc();
         }
+
+        if self.grid.len() > TEXTURES_CACHE_CAPACITY {
+            self.free_tiles(tile_viewbox);
+        }
+
         self.grid.insert(*tile, image);
-    }
 
-    pub fn get(&mut self, tile: Tile) -> Result<&mut skia::Image, String> {
-        let image = self.grid.get_mut(&tile).unwrap();
-        Ok(image)
-    }
-
-    pub fn remove(&mut self, tile: Tile) -> bool {
-        if !self.grid.contains_key(&tile) {
-            return false;
+        if self.removed.contains(tile) {
+            self.removed.remove(tile);
         }
-        self.grid.remove(&tile);
-        true
+    }
+
+    pub fn get(&mut self, tile: Tile) -> Option<&mut skia::Image> {
+        if self.removed.contains(&tile) {
+            return None;
+        }
+        self.grid.get_mut(&tile)
+    }
+
+    pub fn remove(&mut self, tile: Tile) {
+        self.removed.insert(tile);
     }
 
     pub fn clear(&mut self) {
-        self.grid.clear();
+        for k in self.grid.keys() {
+            self.removed.insert(*k);
+        }
     }
 }

@@ -23,14 +23,15 @@
   (dissoc row :perms))
 
 (defn create-access-token
-  [{:keys [::db/conn ::setup/props]} profile-id name expiration]
-  (let [created-at (ct/now)
-        token-id   (uuid/next)
-        token      (tokens/generate props {:iss "access-token"
-                                           :tid token-id
-                                           :iat created-at})
+  [{:keys [::db/conn] :as cfg} profile-id name expiration]
+  (let [token-id   (uuid/next)
+        expires-at (some-> expiration (ct/in-future))
+        created-at (ct/now)
+        token      (tokens/generate cfg {:iss "access-token"
+                                         :uid profile-id
+                                         :iat created-at
+                                         :tid token-id})
 
-        expires-at (some-> expiration ct/in-future)
         token      (db/insert! conn :access-token
                                {:id token-id
                                 :name name

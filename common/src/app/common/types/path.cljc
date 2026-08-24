@@ -34,7 +34,7 @@
 (def schema:segments impl/schema:segments)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; TRANSFORMATIONS
+;; CONSTRUCTORS & TYPE METHODS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn content?
@@ -54,6 +54,10 @@
 (defn from-string
   [data]
   (impl/from-string data))
+
+(defn from-plain
+  [data]
+  (impl/from-plain data))
 
 (defn check-content
   [content]
@@ -108,8 +112,10 @@
                 (:c2y params) (update-in [index :params :c2y] + (:c2y params)))
               content))]
 
-    (impl/path-data
-     (reduce apply-to-index (vec content) modifiers))))
+    (if (some? modifiers)
+      (impl/path-data
+       (reduce apply-to-index (vec content) modifiers))
+      content)))
 
 (defn transform-content
   "Applies a transformation matrix over content and returns a new
@@ -189,6 +195,12 @@
   [content]
   (some-> content segment/get-points))
 
+(defn calc-selrect
+  "Calculate selrect from a content. The content can be in a PathData
+  instance or plain vector of segments."
+  [content]
+  (segment/content->selrect content))
+
 (defn- calc-bool-content*
   "Calculate the boolean content from shape and objects. Returns plain
   vector of segments"
@@ -224,16 +236,15 @@
   "Calculate the boolean content from shape and objects. Returns a
   packed PathData instance"
   [shape objects]
-  (let [content (if (fn? wasm:calc-bool-content)
-                  (wasm:calc-bool-content (get shape :bool-type)
-                                          (get shape :shapes))
-                  (calc-bool-content* shape objects))]
+  (let [content (calc-bool-content* shape objects)]
     (impl/path-data content)))
 
 (defn update-bool-shape
   "Calculates the selrect+points for the boolean shape"
   [shape objects]
-  (let [content (calc-bool-content shape objects)
+  (let [content (if (fn? wasm:calc-bool-content)
+                  (wasm:calc-bool-content shape objects)
+                  (calc-bool-content shape objects))
         shape   (assoc shape :content content)]
     (update-geometry shape)))
 
@@ -257,3 +268,4 @@
    (-> (stp/convert-to-path shape objects)
        (update :content impl/path-data))))
 
+(dm/export impl/decode-segments)

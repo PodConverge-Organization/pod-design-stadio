@@ -51,7 +51,9 @@
     "styles/v2"
     "layout/grid"
     "plugins/runtime"
+    "tokens/numeric-input"
     "design-tokens/v1"
+    "text-editor/v2-html-paste"
     "text-editor/v2"
     "render-wasm/v1"
     "variants/v1"})
@@ -64,12 +66,8 @@
     "layout/grid"
     "components/v2"
     "plugins/runtime"
-    "design-tokens/v1"})
-
-;; A set of features that should not be propagated to team on creating
-;; or modifying a file
-(def no-team-inheritable-features
-  #{"fdata/path-data"})
+    "design-tokens/v1"
+    "variants/v1"})
 
 ;; A set of features which only affects on frontend and can be enabled
 ;; and disabled freely by the user any time. This features does not
@@ -78,14 +76,22 @@
 (def frontend-only-features
   #{"styles/v2"
     "plugins/runtime"
+    "text-editor/v2-html-paste"
     "text-editor/v2"
+    "tokens/numeric-input"
     "render-wasm/v1"})
 
 ;; Features that are mainly backend only or there are a proper
 ;; fallback when frontend reports no support for it
 (def backend-only-features
-  #{"fdata/objects-map"
-    "fdata/pointer-map"})
+  #{"fdata/pointer-map"
+    "fdata/objects-map"})
+
+;; A set of features that should not be propagated to team on creating
+;; or modifying a file or creating or modifying a team
+(def no-team-inheritable-features
+  #{"fdata/path-data"
+    "fdata/shape-data-type"})
 
 ;; This is a set of features that does not require an explicit
 ;; migration like components/v2 or the migration is not mandatory to
@@ -95,17 +101,20 @@
   (-> #{"layout/grid"
         "design-tokens/v1"
         "fdata/shape-data-type"
-        "fdata/path-data"}
+        "fdata/path-data"
+        "tokens/numeric-input"
+        "variants/v1"}
       (into frontend-only-features)
       (into backend-only-features)))
 
-(sm/register!
- ^{::sm/type ::features}
- [:schema
-  {:title "FileFeatures"
-   ::smdj/inline true
-   :gen/gen (smg/subseq supported-features)}
-  [::sm/set :string]])
+(def schema:features
+  (sm/register!
+   ^{::sm/type ::features}
+   [:schema
+    {:title "FileFeatures"
+     ::smdj/inline true
+     :gen/gen (smg/subseq supported-features)}
+    [::sm/set :string]]))
 
 (defn- flag->feature
   "Translate a flag to a feature name"
@@ -117,8 +126,10 @@
     :feature-plugins "plugins/runtime"
     :feature-design-tokens "design-tokens/v1"
     :feature-text-editor-v2 "text-editor/v2"
+    :feature-text-editor-v2-html-paste "text-editor/v2-html-paste"
     :feature-render-wasm "render-wasm/v1"
     :feature-variants "variants/v1"
+    :feature-token-input "tokens/numeric-input"
     nil))
 
 (defn migrate-legacy-features
@@ -219,8 +230,6 @@
                 :feature not-supported
                 :hint (str/ffmt "enabled feature '%' not present in file (missing migration)"
                                 not-supported)))
-
-    (check-supported-features! file-features)
 
     ;; Components v1 is deprecated
     (when-not (contains? file-features "components/v2")

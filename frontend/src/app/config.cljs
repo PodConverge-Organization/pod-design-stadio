@@ -86,7 +86,6 @@
 (def default-theme  "default")
 (def default-language "en")
 
-(def translations         (obj/get global "penpotTranslations"))
 (def themes               (obj/get global "penpotThemes"))
 
 (def build-date           (parse-build-date global))
@@ -96,6 +95,7 @@
 (def browser              (parse-browser))
 (def platform             (parse-platform))
 
+(def version-tag          (obj/get global "penpotVersionTag"))
 (def terms-of-service-uri (obj/get global "penpotTermsOfServiceURI"))
 (def privacy-policy-uri   (obj/get global "penpotPrivacyPolicyURI"))
 (def flex-help-uri        (obj/get global "penpotGridHelpURI" "https://help.penpot.app/user-guide/flexible-layouts/"))
@@ -103,7 +103,7 @@
 (def plugins-list-uri     (obj/get global "penpotPluginsListUri" "https://penpot.app/penpothub/plugins"))
 (def plugins-whitelist    (into #{} (obj/get global "penpotPluginsWhitelist" [])))
 (def templates-uri        (obj/get global "penpotTemplatesUri" "https://penpot.github.io/penpot-files/"))
-
+(def design-studio-recovery-uri (obj/get global "penpotDesignStudioRecoveryURI"))
 
 ;; We set the current parsed flags under common for make
 ;; it available for common code without the need to pass
@@ -112,12 +112,9 @@
 
 (defn- normalize-uri
   [uri-str]
-  (let [uri (u/uri uri-str)]
-    ;; Ensure that the path always ends with "/"; this ensures that
-    ;; all path join operations works as expected.
-    (cond-> uri
-      (not (str/ends-with? (:path uri) "/"))
-      (update :path #(str % "/")))))
+  ;; Ensure that the path always ends with "/"; this ensures that
+  ;; all path join operations works as expected.
+  (u/ensure-path-slash uri-str))
 
 (def public-uri
   (normalize-uri (or (obj/get global "penpotPublicURI")
@@ -128,7 +125,7 @@
       public-uri))
 
 (def worker-uri
-  (obj/get global "penpotWorkerURI" "/js/worker.js"))
+  (obj/get global "penpotWorkerURI" "/js/worker/main.js"))
 
 (defn external-feature-flag
   [flag value]
@@ -190,7 +187,10 @@
         (true? thumbnail?) (u/join (dm/str id "/thumbnail"))
         (false? thumbnail?) (u/join (dm/str id)))))))
 
-(defn resolve-static-asset
-  [path]
-  (let [uri (u/join public-uri path)]
-    (assoc uri :query (dm/str "version=" (:full version)))))
+(defn resolve-href
+  [resource]
+  (let [href (-> public-uri
+                 (u/ensure-path-slash)
+                 (u/join resource)
+                 (get :path))]
+    (str href "?version=" version-tag)))

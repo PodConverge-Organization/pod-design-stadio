@@ -1,174 +1,336 @@
-use super::{RenderState, Shape, SurfaceId};
-use crate::shapes::VerticalAlign;
-use crate::utils::get_font_collection;
-use skia_safe::{textlayout::ParagraphBuilder, FontMetrics, Paint, Path};
+use super::{filters, RenderState, Shape, SurfaceId};
+use crate::{
+    math::Rect,
+    shapes::{
+        calculate_position_data, calculate_text_layout_data, merge_fills, set_paint_fill,
+        ParagraphBuilderGroup, Stroke, StrokeKind, TextContent,
+    },
+    utils::{get_fallback_fonts, get_font_collection},
+};
+use skia_safe::{
+    self as skia,
+    canvas::SaveLayerRec,
+    textlayout::{ParagraphBuilder, StyleMetrics, TextDecoration, TextStyle},
+    Canvas, ImageFilter, Paint, Path,
+};
+
+pub fn stroke_paragraph_builder_group_from_text(
+    text_content: &TextContent,
+    stroke: &Stroke,
+    bounds: &Rect,
+    count_inner_strokes: usize,
+    use_shadow: Option<bool>,
+) -> Vec<ParagraphBuilderGroup> {
+    let fallback_fonts = get_fallback_fonts();
+    let fonts = get_font_collection();
+    let mut paragraph_group = Vec::new();
+    let remove_stroke_alpha = use_shadow.unwrap_or(false) && !stroke.is_transparent();
+
+    for paragraph in text_content.paragraphs() {
+        let mut stroke_paragraphs_map: std::collections::HashMap<usize, ParagraphBuilder> =
+            std::collections::HashMap::new();
+
+        for span in paragraph.children().iter() {
+            let text_paint: skia_safe::Handle<_> = merge_fills(span.fills(), *bounds);
+            let stroke_paints = get_text_stroke_paints(
+                stroke,
+                bounds,
+                &text_paint,
+                count_inner_strokes,
+                remove_stroke_alpha,
+            );
+
+            let text: String = span.apply_text_transform();
+
+            for (paint_idx, stroke_paint) in stroke_paints.iter().enumerate() {
+                let builder = stroke_paragraphs_map.entry(paint_idx).or_insert_with(|| {
+                    let paragraph_style = paragraph.paragraph_to_style();
+                    ParagraphBuilder::new(&paragraph_style, fonts)
+                });
+                let stroke_paint = stroke_paint.clone();
+                let remove_alpha = use_shadow.unwrap_or(false) && !span.is_transparent();
+                let stroke_style = span.to_stroke_style(
+                    &stroke_paint,
+                    fallback_fonts,
+                    remove_alpha,
+                    paragraph.line_height(),
+                );
+                builder.push_style(&stroke_style);
+                builder.add_text(&text);
+            }
+        }
+
+        let stroke_paragraphs: Vec<ParagraphBuilder> = (0..stroke_paragraphs_map.len())
+            .map(|i| stroke_paragraphs_map.remove(&i).unwrap())
+            .collect();
+
+        paragraph_group.push(stroke_paragraphs);
+    }
+
+    paragraph_group
+}
+
+fn get_text_stroke_paints(
+    stroke: &Stroke,
+    bounds: &Rect,
+    text_paint: &Paint,
+    count_inner_strokes: usize,
+    remove_stroke_alpha: bool,
+) -> Vec<Paint> {
+    let mut paints = Vec::new();
+
+    match stroke.kind {
+        StrokeKind::Inner => {
+            let shader = text_paint.shader();
+            let mut is_opaque = true;
+
+            if let Some(shader) = shader {
+                is_opaque = shader.is_opaque();
+            }
+
+            if is_opaque && count_inner_strokes == 1 {
+                let mut paint = text_paint.clone();
+                paint.set_style(skia::PaintStyle::Fill);
+                paint.set_anti_alias(true);
+                paints.push(paint);
+
+                let mut paint = skia::Paint::default();
+                paint.set_style(skia::PaintStyle::Stroke);
+                paint.set_blend_mode(skia::BlendMode::SrcIn);
+                paint.set_anti_alias(true);
+                paint.set_stroke_width(stroke.width * 2.0);
+                set_paint_fill(&mut paint, &stroke.fill, bounds, remove_stroke_alpha);
+                paints.push(paint);
+            } else {
+                let mut paint = skia::Paint::default();
+                if remove_stroke_alpha {
+                    paint.set_color(skia::Color::BLACK);
+                    paint.set_alpha(255);
+                } else {
+                    paint = text_paint.clone();
+                    set_paint_fill(&mut paint, &stroke.fill, bounds, false);
+                }
+
+                paint.set_style(skia::PaintStyle::Fill);
+                paint.set_anti_alias(false);
+                paints.push(paint);
+
+                let mut paint = skia::Paint::default();
+                let image_filter =
+                    skia_safe::image_filters::erode((stroke.width, stroke.width), None, None);
+
+                paint.set_image_filter(image_filter);
+                paint.set_anti_alias(false);
+                paint.set_color(skia::Color::BLACK);
+                paint.set_alpha(255);
+                paint.set_blend_mode(skia::BlendMode::DstOut);
+                paints.push(paint);
+            }
+        }
+        StrokeKind::Center => {
+            let mut paint = skia::Paint::default();
+            paint.set_style(skia::PaintStyle::Stroke);
+            paint.set_anti_alias(true);
+            paint.set_stroke_width(stroke.width);
+            set_paint_fill(&mut paint, &stroke.fill, bounds, remove_stroke_alpha);
+            paints.push(paint);
+        }
+        StrokeKind::Outer => {
+            let mut paint = skia::Paint::default();
+            paint.set_style(skia::PaintStyle::Stroke);
+            paint.set_blend_mode(skia::BlendMode::DstOver);
+            paint.set_anti_alias(true);
+            paint.set_stroke_width(stroke.width * 2.0);
+            set_paint_fill(&mut paint, &stroke.fill, bounds, remove_stroke_alpha);
+            paints.push(paint);
+
+            let mut paint = skia::Paint::default();
+            paint.set_style(skia::PaintStyle::Fill);
+            paint.set_blend_mode(skia::BlendMode::Clear);
+            paint.set_color(skia::Color::TRANSPARENT);
+            paint.set_anti_alias(true);
+            paints.push(paint);
+        }
+    }
+
+    paints
+}
 
 pub fn render(
-    render_state: &mut RenderState,
+    render_state: Option<&mut RenderState>,
+    canvas: Option<&Canvas>,
     shape: &Shape,
-    paragraphs: &mut [Vec<ParagraphBuilder>],
+    paragraph_builders: &mut [Vec<ParagraphBuilder>],
     surface_id: Option<SurfaceId>,
-    paint: Option<&Paint>,
+    shadow: Option<&Paint>,
+    blur: Option<&ImageFilter>,
 ) {
-    let fonts = get_font_collection();
-    let canvas = render_state
-        .surfaces
-        .canvas(surface_id.unwrap_or(SurfaceId::Fills));
-    let container_height = shape.selrect().height();
+    if let Some(render_state) = render_state {
+        let target_surface = surface_id.unwrap_or(SurfaceId::Fills);
 
-    // Calculate total height for vertical alignment
-    let total_content_height = calculate_all_paragraphs_height(paragraphs, shape.bounds().width());
-    let mut global_offset_y = match shape.vertical_align() {
-        VerticalAlign::Center => (container_height - total_content_height) / 2.0,
-        VerticalAlign::Bottom => container_height - total_content_height,
-        _ => 0.0,
-    };
-
-    let layer_rec = skia_safe::canvas::SaveLayerRec::default();
-    canvas.save_layer(&layer_rec);
-
-    for group in paragraphs {
-        let mut group_offset_y = global_offset_y;
-        let group_len = group.len();
-
-        for (index, builder) in group.iter_mut().enumerate() {
-            let mut skia_paragraph = builder.build();
-
-            if paint.is_some() && index == 0 {
-                let text = builder.get_text().to_string();
-                let mut paragraph_builder =
-                    ParagraphBuilder::new(&builder.get_paragraph_style(), fonts);
-                let mut text_style: skia_safe::Handle<_> = builder.peek_style();
-                text_style.set_foreground_paint(paint.unwrap());
-                paragraph_builder.reset();
-                paragraph_builder.push_style(&text_style);
-                paragraph_builder.add_text(&text);
-                skia_paragraph = paragraph_builder.build();
-            } else if paint.is_some() && index > 0 {
-                continue;
-            }
-
-            skia_paragraph.layout(shape.bounds().width());
-
-            let paragraph_height = skia_paragraph.height();
-            let xy = (shape.selrect().x(), shape.selrect().y() + group_offset_y);
-            skia_paragraph.paint(canvas, xy);
-
-            for line_metrics in skia_paragraph.get_line_metrics().iter() {
-                let style_metrics: Vec<_> = line_metrics
-                    .get_style_metrics(line_metrics.start_index..line_metrics.end_index)
-                    .into_iter()
-                    .collect();
-
-                let mut current_x_offset = 0.0;
-                let total_line_width = line_metrics.width as f32;
-                let total_chars = line_metrics.end_index - line_metrics.start_index;
-
-                // Calculate line's actual start position considering text alignment
-                // let paragraph_width = shape.bounds().width();
-                let line_start_offset = line_metrics.left as f32;
-
-                // No text decoration for empty lines
-                if total_chars == 0 || style_metrics.is_empty() {
-                    continue;
-                }
-
-                for (i, (index, style_metric)) in style_metrics.iter().enumerate() {
-                    let text_style = style_metric.text_style;
-                    let font_metrics = style_metric.font_metrics;
-                    let next_index = style_metrics
-                        .get(i + 1)
-                        .map(|(next_i, _)| *next_i)
-                        .unwrap_or(line_metrics.end_index);
-                    let char_count = next_index - index;
-                    let segment_width = if total_chars > 0 {
-                        (char_count as f32 / total_chars as f32) * total_line_width
-                    } else {
-                        char_count as f32 * font_metrics.avg_char_width
-                    };
-                    if text_style.decoration().ty
-                        != skia_safe::textlayout::TextDecoration::NO_DECORATION
-                    {
-                        let decoration_type = text_style.decoration().ty;
-                        let text_left = xy.0 + line_start_offset + current_x_offset;
-                        let text_top =
-                            xy.1 + line_metrics.baseline as f32 - line_metrics.ascent as f32;
-                        let text_width = segment_width;
-                        let line_height = line_metrics.height as f32;
-
-                        let r = calculate_text_decoration_rect(
-                            decoration_type,
-                            font_metrics,
-                            text_left,
-                            text_top,
-                            text_width,
-                            line_height,
+        if let Some(blur_filter) = blur {
+            let bounds = blur_filter.compute_fast_bounds(shape.selrect);
+            if bounds.is_finite() && bounds.width() > 0.0 && bounds.height() > 0.0 {
+                let blur_filter_clone = blur_filter.clone();
+                if filters::render_with_filter_surface(
+                    render_state,
+                    bounds,
+                    target_surface,
+                    |state, temp_surface| {
+                        let temp_canvas = state.surfaces.canvas(temp_surface);
+                        render_text_on_canvas(
+                            temp_canvas,
+                            shape,
+                            paragraph_builders,
+                            shadow,
+                            Some(&blur_filter_clone),
                         );
-
-                        if let Some(decoration_rect) = r {
-                            let decoration_paint = text_style.foreground();
-                            canvas.draw_rect(decoration_rect, &decoration_paint);
-                        }
-                    }
-                    current_x_offset += segment_width;
+                    },
+                ) {
+                    return;
                 }
             }
-
-            // Only increment group_offset_y for regular paragraphs (single element groups)
-            // For stroke groups (multiple elements), keep same offset for blending
-            if group_len == 1 {
-                group_offset_y += paragraph_height;
-            }
-            // For stroke groups (group_len > 1), don't increment group_offset_y within the group
-            // This ensures all stroke variants render at the same position for proper blending
         }
 
-        // For stroke groups (multiple elements), increment global_offset_y once per group
-        if group_len > 1 {
-            let mut first_paragraph = group[0].build();
-            first_paragraph.layout(shape.bounds().width());
-            global_offset_y += first_paragraph.height();
-        } else {
-            // For regular paragraphs, global_offset_y was already incremented inside the loop
-            global_offset_y = group_offset_y;
-        }
+        let canvas = render_state.surfaces.canvas_and_mark_dirty(target_surface);
+        render_text_on_canvas(canvas, shape, paragraph_builders, shadow, blur);
+        return;
+    }
+
+    if let Some(canvas) = canvas {
+        render_text_on_canvas(canvas, shape, paragraph_builders, shadow, blur);
+    }
+}
+
+fn render_text_on_canvas(
+    canvas: &Canvas,
+    shape: &Shape,
+    paragraph_builders: &mut [Vec<ParagraphBuilder>],
+    shadow: Option<&Paint>,
+    blur: Option<&ImageFilter>,
+) {
+    if let Some(blur_filter) = blur {
+        let mut blur_paint = Paint::default();
+        blur_paint.set_image_filter(blur_filter.clone());
+        let blur_layer = SaveLayerRec::default().paint(&blur_paint);
+        canvas.save_layer(&blur_layer);
+    }
+
+    if let Some(shadow_paint) = shadow {
+        let layer_rec = SaveLayerRec::default().paint(shadow_paint);
+        canvas.save_layer(&layer_rec);
+        draw_text(canvas, shape, paragraph_builders);
+        canvas.restore();
+    } else {
+        draw_text(canvas, shape, paragraph_builders);
+    }
+
+    if blur.is_some() {
+        canvas.restore();
     }
 
     canvas.restore();
 }
 
-pub fn calculate_text_decoration_rect(
-    decoration: skia_safe::textlayout::TextDecoration,
-    font_metrics: FontMetrics,
-    blob_left: f32,
-    blob_offset_y: f32,
-    text_width: f32,
-    blob_height: f32,
-) -> Option<skia_safe::Rect> {
-    let thickness = font_metrics.underline_thickness().unwrap_or(1.0);
-    match decoration {
-        skia_safe::textlayout::TextDecoration::LINE_THROUGH => {
-            let line_position = blob_height / 2.0;
-            Some(skia_safe::Rect::new(
-                blob_left,
-                blob_offset_y + line_position - thickness / 2.0,
-                blob_left + text_width,
-                blob_offset_y + line_position + thickness / 2.0,
-            ))
+fn draw_text(
+    canvas: &Canvas,
+    shape: &Shape,
+    paragraph_builder_groups: &mut [Vec<ParagraphBuilder>],
+) {
+    let text_content = shape.get_text_content();
+    let layout_info =
+        calculate_text_layout_data(shape, text_content, paragraph_builder_groups, true);
+
+    let layer_rec = SaveLayerRec::default();
+    canvas.save_layer(&layer_rec);
+
+    for para in &layout_info.paragraphs {
+        para.paragraph.paint(canvas, (para.x, para.y));
+        for deco in &para.decorations {
+            draw_text_decorations(
+                canvas,
+                &deco.text_style,
+                Some(deco.y),
+                deco.thickness,
+                deco.left,
+                deco.width,
+            );
         }
-        skia_safe::textlayout::TextDecoration::UNDERLINE => {
-            let underline_y = blob_offset_y + blob_height - thickness;
-            Some(skia_safe::Rect::new(
-                blob_left,
-                underline_y,
-                blob_left + text_width,
-                underline_y + thickness,
-            ))
-        }
-        _ => None,
     }
 }
 
+fn draw_text_decorations(
+    canvas: &Canvas,
+    text_style: &TextStyle,
+    y: Option<f32>,
+    thickness: f32,
+    text_left: f32,
+    text_width: f32,
+) {
+    if let Some(y) = y {
+        let r = skia_safe::Rect::new(
+            text_left,
+            y - thickness / 2.0,
+            text_left + text_width,
+            y + thickness / 2.0,
+        );
+        let mut decoration_paint = text_style.foreground();
+        decoration_paint.set_anti_alias(true);
+        canvas.draw_rect(r, &decoration_paint);
+    }
+}
+
+pub fn calculate_decoration_metrics(
+    style_metrics: &Vec<(usize, &StyleMetrics)>,
+    line_baseline: f32,
+) -> (f32, Option<f32>, f32, Option<f32>) {
+    let mut max_underline_thickness: f32 = 0.0;
+    let mut underline_y = None;
+    let mut max_strike_thickness: f32 = 0.0;
+    let mut strike_y = None;
+    for (_style_start, style_metric) in style_metrics.iter() {
+        let font_metrics = style_metric.font_metrics;
+        let font_size = font_metrics
+            .cap_height
+            .abs()
+            .max(font_metrics.x_height.abs());
+        let min_thickness = (font_size * 0.06).max(1.0);
+
+        // Magic numbers for line thickness partially based on Chromium
+        // (see https://source.chromium.org/chromium/chromium/src/+/main:ui/gfx/render_text.cc
+        let raw_font_size = style_metric.text_style.font_size();
+        let thickness_factor = raw_font_size.powf(0.4) * 6.0 / 18.0;
+
+        let thickness = (font_metrics.underline_thickness().unwrap_or(1.0) * thickness_factor)
+            .max(min_thickness);
+
+        if style_metric.text_style.decoration().ty == TextDecoration::UNDERLINE {
+            // Same gap from baseline to underline as in Chromium
+            // (see https://source.chromium.org/chromium/chromium/src/+/main:ui/gfx/render_text.cc
+            let gap_scaling = raw_font_size * 1.0 / 9.0;
+            let y = line_baseline + gap_scaling;
+
+            max_underline_thickness = max_underline_thickness.max(thickness);
+            underline_y = Some(y);
+        }
+        if style_metric.text_style.decoration().ty == TextDecoration::LINE_THROUGH {
+            let y = line_baseline
+                + font_metrics
+                    .strikeout_position()
+                    .unwrap_or(-font_metrics.cap_height / 2.0);
+            max_strike_thickness = max_strike_thickness.max(thickness);
+            strike_y = Some(y);
+        }
+    }
+    (
+        max_underline_thickness,
+        underline_y,
+        max_strike_thickness,
+        strike_y,
+    )
+}
+
+#[allow(dead_code)]
 fn calculate_total_paragraphs_height(paragraphs: &mut [ParagraphBuilder], width: f32) -> f32 {
     paragraphs
         .iter_mut()
@@ -180,6 +342,7 @@ fn calculate_total_paragraphs_height(paragraphs: &mut [ParagraphBuilder], width:
         .sum()
 }
 
+#[allow(dead_code)]
 fn calculate_all_paragraphs_height(
     paragraph_groups: &mut [Vec<ParagraphBuilder>],
     width: f32,
@@ -208,11 +371,34 @@ pub fn render_as_path(
 ) {
     let canvas = render_state
         .surfaces
-        .canvas(surface_id.unwrap_or(SurfaceId::Fills));
+        .canvas_and_mark_dirty(surface_id.unwrap_or(SurfaceId::Fills));
 
     for (path, paint) in paths {
         // Note: path can be empty
         canvas.draw_path(path, paint);
+    }
+}
+
+#[allow(dead_code)]
+pub fn render_position_data(
+    render_state: &mut RenderState,
+    surface_id: SurfaceId,
+    shape: &Shape,
+    text_content: &TextContent,
+) {
+    let position_data = calculate_position_data(shape, text_content, false);
+
+    let mut paint = skia::Paint::default();
+    paint.set_style(skia::PaintStyle::Stroke);
+    paint.set_color(skia::Color::from_argb(255, 255, 0, 0));
+    paint.set_stroke_width(2.);
+
+    for pd in position_data {
+        let rect = Rect::from_xywh(pd.x, pd.y, pd.width, pd.height);
+        render_state
+            .surfaces
+            .canvas_and_mark_dirty(surface_id)
+            .draw_rect(rect, &paint);
     }
 }
 
@@ -226,11 +412,11 @@ pub fn render_as_path(
 //     let text_content = text_content.new_bounds(shape.selrect());
 //     let paths = text_content.get_paths(antialias);
 
-//     shadows::render_text_drop_shadows(self, &shape, &paths, antialias);
+//     shadows::render_text_shadows(self, &shape, &paths, antialias);
 //     text::render(self, &paths, None, None);
 
 //     for stroke in shape.visible_strokes().rev() {
-//         shadows::render_text_path_stroke_drop_shadows(
+//         shadows::render_text_path_stroke_shadows(
 //             self, &shape, &paths, stroke, antialias,
 //         );
 //         strokes::render_text_paths(self, &shape, stroke, &paths, None, None, antialias);

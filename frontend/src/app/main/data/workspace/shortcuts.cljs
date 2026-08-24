@@ -173,10 +173,10 @@
                           :subsections [:modify-layers]
                           :fn #(emit-when-no-readonly (dw/unmask-group))}
 
-   :create-component     {:tooltip (ds/meta "K")
-                          :command (ds/c-mod "k")
-                          :subsections [:modify-layers]
-                          :fn #(emit-when-no-readonly (dwv/add-component-or-variant))}
+   :create-component-variant {:tooltip (ds/meta "K")
+                              :command (ds/c-mod "k")
+                              :subsections [:modify-layers]
+                              :fn #(emit-when-no-readonly (dwv/add-component-or-variant))}
 
    :detach-component     {:tooltip (ds/meta-shift "K")
                           :command (ds/c-mod "shift+k")
@@ -213,22 +213,22 @@
                           :fn #(emit-when-no-readonly (dw/vertical-order-selected :bottom))}
 
    :move-fast-up         {:tooltip (ds/shift ds/up-arrow)
-                          :command ["shift+up" "shift+alt+up" "alt+shift+up"]
+                          :command ["shift+up" "shift+alt+up"]
                           :subsections [:modify-layers]
                           :fn #(emit-when-no-readonly (dwt/move-selected :up true))}
 
    :move-fast-down       {:tooltip (ds/shift ds/down-arrow)
-                          :command ["shift+down" "shift+alt+down" "alt+shift+down"]
+                          :command ["shift+down" "shift+alt+down"]
                           :subsections [:modify-layers]
                           :fn #(emit-when-no-readonly (dwt/move-selected :down true))}
 
    :move-fast-right      {:tooltip (ds/shift ds/right-arrow)
-                          :command ["shift+right" "shift+alt+right" "alt+shift+right"]
+                          :command ["shift+right" "shift+alt+right"]
                           :subsections [:modify-layers]
                           :fn #(emit-when-no-readonly (dwt/move-selected :right true))}
 
    :move-fast-left       {:tooltip (ds/shift ds/left-arrow)
-                          :command ["shift+left" "shift+alt+left" "alt+shift+left"]
+                          :command ["shift+left" "shift+alt+left"]
                           :subsections [:modify-layers]
                           :fn #(emit-when-no-readonly (dwt/move-selected :left true))}
 

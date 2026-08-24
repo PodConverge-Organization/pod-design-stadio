@@ -15,8 +15,8 @@
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.components.select :refer [select]]
-   [app.main.ui.components.title-bar :refer [title-bar]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.components.title-bar :refer [title-bar*]]
+   [app.main.ui.ds.controls.checkbox :refer [checkbox*]]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [cuerdas.core :as str]
@@ -27,6 +27,8 @@
                        :fixed-scroll
                        :parent-id
                        :frame-id])
+
+(def ^:private constraints-enabled? false)
 
 (mf/defc constraints-menu
   [{:keys [ids values] :as props}]
@@ -61,6 +63,7 @@
         constraints-h (or (get values :constraints-h) (gsh/default-constraints-h values))
         constraints-v (or (get values :constraints-v) (gsh/default-constraints-v values))
 
+        fixed-scroll? (d/nilv (:fixed-scroll values) false)
 
         on-constraint-button-clicked
         (mf/use-fn
@@ -154,81 +157,72 @@
 
 
     ;; CONSTRAINTS
-;;     (when in-frame?
-;;       [:div {:class (stl/css :element-set)}
-;;        [:div {:class (stl/css :element-title)}
-;;         [:& title-bar {:collapsable  true
-;;                        :collapsed    (not open?)
-;;                        :on-collapsed toggle-content
-;;                        :title        (tr "workspace.options.constraints")}]]
-;;        (when open?
-;;          [:div {:class (stl/css :element-set-content)}
-;;           [:div {:class (stl/css :constraints-widget)}
-;;            [:div {:class (stl/css :constraints-top)}
-;;             [:button {:class (stl/css-case :constraint-btn true
-;;                                            :active (or (= constraints-v :top)
-;;                                                        (= constraints-v :topbottom)))
-;;                       :data-value "top"
-;;                       :on-click on-constraint-button-clicked}
-;;              [:span {:class (stl/css :resalted-area)}]]]
-;;            [:div {:class (stl/css :constraints-left)}
-;;             [:button {:class (stl/css-case :constraint-btn true
-;;                                            :constraint-btn-rotated true
-;;                                            :active (or (= constraints-h :left)
-;;                                                        (= constraints-h :leftright)))
-;;                       :data-value "left"
-;;                       :on-click on-constraint-button-clicked}
-;;              [:span {:class (stl/css :resalted-area)}]]]
-;;            [:div {:class (stl/css :constraints-center)}
-;;             [:button {:class (stl/css-case :constraint-btn true
-;;                                            :active (= constraints-v :center))
-;;                       :data-value "centerv"
-;;                       :on-click on-constraint-button-clicked}
-;;              [:span {:class (stl/css :resalted-area)}]]
-;;             [:button {:class (stl/css-case :constraint-btn-special true
-;;                                            :constraint-btn-rotated true
-;;                                            :active (= constraints-h :center))
-;;                       :data-value "centerh"
-;;                       :on-click on-constraint-button-clicked}
-;;              [:span {:class (stl/css :resalted-area)}]]]
-;;            [:div {:class (stl/css :constraints-right)}
-;;             [:button {:class (stl/css-case :constraint-btn true
-;;                                            :constraint-btn-rotated true
-;;                                            :active (or (= constraints-h :right)
-;;                                                        (= constraints-h :leftright)))
-;;                       :data-value "right"
-;;                       :on-click on-constraint-button-clicked}
-;;              [:span {:class (stl/css :resalted-area)}]]]
-;;            [:div {:class (stl/css :constraints-bottom)}
-;;             [:button {:class (stl/css-case :constraint-btn true
-;;                                            :active (or (= constraints-v :bottom)
-;;                                                        (= constraints-v :topbottom)))
-;;                       :data-value "bottom"
-;;                       :on-click on-constraint-button-clicked}
-;;              [:span {:class (stl/css :resalted-area)}]]]]
-;;           [:div {:class (stl/css :contraints-selects)}
-;;            [:div {:class (stl/css :horizontal-select) :data-testid "constraint-h-select"}
-;;             [:& select
-;;              {:default-value (if (not= constraints-h :multiple) (d/nilv (d/name constraints-h) "scale") "")
-;;               :options options-h
-;;               :on-change on-constraint-h-select-changed}]]
-;;            [:div {:class (stl/css :vertical-select) :data-testid "constraint-v-select"}
-;;             [:& select
-;;              {:default-value (if (not= constraints-v :multiple) (d/nilv (d/name constraints-v) "scale") "")
-;;               :options options-v
-;;               :on-change on-constraint-v-select-changed}]]
-;;            (when first-level?
-;;              [:div {:class (stl/css :checkbox)}
-;;
-;;               [:label {:for "fixed-on-scroll"
-;;                        :class (stl/css-case :checked (:fixed-scroll values))}
-;;                [:span {:class (stl/css-case :check-mark true
-;;                                             :checked (:fixed-scroll values))}
-;;                 (when (:fixed-scroll values)
-;;                   i/status-tick)]
-;;                (tr "workspace.options.constraints.fix-when-scrolling")
-;;                [:input {:type "checkbox"
-;;                         :id "fixed-on-scroll"
-;;                         :checked (:fixed-scroll values)
-;;                         :on-change on-fixed-scroll-clicked}]]])]])])
-                        ))
+    (when (and constraints-enabled? in-frame?)
+      [:div {:class (stl/css :element-set)}
+       [:div {:class (stl/css :element-title)}
+        [:> title-bar* {:collapsable  true
+                        :collapsed    (not open?)
+                        :on-collapsed toggle-content
+                        :title        (tr "workspace.options.constraints")}]]
+       (when open?
+         [:div {:class (stl/css :element-set-content)}
+          [:div {:class (stl/css :constraints-widget)}
+           [:div {:class (stl/css :constraints-top)}
+            [:button {:class (stl/css-case :constraint-btn true
+                                           :active (or (= constraints-v :top)
+                                                       (= constraints-v :topbottom)))
+                      :data-value "top"
+                      :on-click on-constraint-button-clicked}
+             [:span {:class (stl/css :resalted-area)}]]]
+           [:div {:class (stl/css :constraints-left)}
+            [:button {:class (stl/css-case :constraint-btn true
+                                           :constraint-btn-rotated true
+                                           :active (or (= constraints-h :left)
+                                                       (= constraints-h :leftright)))
+                      :data-value "left"
+                      :on-click on-constraint-button-clicked}
+             [:span {:class (stl/css :resalted-area)}]]]
+           [:div {:class (stl/css :constraints-center)}
+            [:button {:class (stl/css-case :constraint-btn true
+                                           :active (= constraints-v :center))
+                      :data-value "centerv"
+                      :on-click on-constraint-button-clicked}
+             [:span {:class (stl/css :resalted-area)}]]
+            [:button {:class (stl/css-case :constraint-btn-special true
+                                           :constraint-btn-rotated true
+                                           :active (= constraints-h :center))
+                      :data-value "centerh"
+                      :on-click on-constraint-button-clicked}
+             [:span {:class (stl/css :resalted-area)}]]]
+           [:div {:class (stl/css :constraints-right)}
+            [:button {:class (stl/css-case :constraint-btn true
+                                           :constraint-btn-rotated true
+                                           :active (or (= constraints-h :right)
+                                                       (= constraints-h :leftright)))
+                      :data-value "right"
+                      :on-click on-constraint-button-clicked}
+             [:span {:class (stl/css :resalted-area)}]]]
+           [:div {:class (stl/css :constraints-bottom)}
+            [:button {:class (stl/css-case :constraint-btn true
+                                           :active (or (= constraints-v :bottom)
+                                                       (= constraints-v :topbottom)))
+                      :data-value "bottom"
+                      :on-click on-constraint-button-clicked}
+             [:span {:class (stl/css :resalted-area)}]]]]
+          [:div {:class (stl/css :constraints-selects)}
+           [:div {:class (stl/css :horizontal-select) :data-testid "constraint-h-select"}
+            [:& select
+             {:default-value (if (not= constraints-h :multiple) (d/nilv (d/name constraints-h) "scale") "")
+              :options options-h
+              :on-change on-constraint-h-select-changed}]]
+           [:div {:class (stl/css :vertical-select) :data-testid "constraint-v-select"}
+            [:& select
+             {:default-value (if (not= constraints-v :multiple) (d/nilv (d/name constraints-v) "scale") "")
+              :options options-v
+              :on-change on-constraint-v-select-changed}]]
+           (when first-level?
+             [:> checkbox* {:id "fixed-on-scroll"
+                            :class (stl/css :checkbox)
+                            :label (tr "workspace.options.constraints.fix-when-scrolling")
+                            :checked fixed-scroll?
+                            :on-change on-fixed-scroll-clicked}])]])])))

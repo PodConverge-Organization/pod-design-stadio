@@ -13,7 +13,6 @@
    [app.config :as cf]
    [app.db :as db]
    [app.rpc :as-alias rpc]
-   [app.rpc.commands.files :as files]
    [app.rpc.commands.teams :as teams]
    [app.rpc.cond :as-alias cond]
    [app.rpc.doc :as-alias doc]
@@ -51,7 +50,7 @@
 
 (defn- get-view-only-bundle
   [{:keys [::db/conn] :as cfg} {:keys [profile-id file-id ::perms] :as params}]
-  (let [file    (files/get-file cfg file-id)
+  (let [file    (bfc/get-file cfg file-id)
 
         project (db/get conn :project
                         {:id (:project-id file)}
@@ -81,7 +80,7 @@
 
         libs    (->> (bfc/get-file-libraries conn file-id)
                      (mapv (fn [{:keys [id] :as lib}]
-                             (merge lib (files/get-file cfg id)))))
+                             (merge lib (bfc/get-file cfg id)))))
 
         links   (->> (db/query conn :share-link {:file-id file-id})
                      (mapv (fn [row]
@@ -121,7 +120,7 @@
   [system {:keys [::rpc/profile-id file-id share-id] :as params}]
   (db/run! system
            (fn [{:keys [::db/conn] :as system}]
-             (let [perms  (files/get-permissions conn profile-id file-id share-id)
+             (let [perms  (bfc/get-file-permissions conn profile-id file-id share-id)
                    params (-> params
                               (assoc ::perms perms)
                               (assoc :profile-id profile-id))]

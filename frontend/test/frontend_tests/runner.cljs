@@ -4,22 +4,28 @@
    [frontend-tests.basic-shapes-test]
    [frontend-tests.data.workspace-colors-test]
    [frontend-tests.data.workspace-text-defaults-test]
+   [frontend-tests.design-studio-session-recovery-test]
    [frontend-tests.helpers-shapes-test]
+   [frontend-tests.inspect-code-boundary-test]
    [frontend-tests.logic.comp-remove-swap-slots-test]
    [frontend-tests.logic.components-and-tokens]
    [frontend-tests.logic.copying-and-duplicating-test]
    [frontend-tests.logic.frame-guides-test]
    [frontend-tests.logic.groups-test]
+   [frontend-tests.logic.pasting-in-containers-test]
    [frontend-tests.plugins.context-shapes-test]
    [frontend-tests.print-area-protection-test]
+   [frontend-tests.svg-fills-test]
    [frontend-tests.tokens.import-export-test]
    [frontend-tests.tokens.logic.token-actions-test]
    [frontend-tests.tokens.logic.token-data-test]
+   [frontend-tests.tokens.logic.token-remapping-test]
    [frontend-tests.tokens.style-dictionary-test]
-   [frontend-tests.tokens.token-form-test]
+   [frontend-tests.tokens.workspace-tokens-remap-test]
+   [frontend-tests.util-object-test]
    [frontend-tests.util-range-tree-test]
    [frontend-tests.util-simple-math-test]
-   [frontend-tests.util-snap-data-test]))
+   [frontend-tests.worker-snap-test]))
 
 (enable-console-print!)
 
@@ -31,22 +37,28 @@
 (defn init
   []
   (t/run-tests
+   'frontend-tests.basic-shapes-test
+   'frontend-tests.data.workspace-colors-test
+   'frontend-tests.data.workspace-text-defaults-test
+   'frontend-tests.design-studio-session-recovery-test
    'frontend-tests.helpers-shapes-test
+   'frontend-tests.inspect-code-boundary-test
    'frontend-tests.logic.comp-remove-swap-slots-test
    'frontend-tests.logic.components-and-tokens
    'frontend-tests.logic.copying-and-duplicating-test
    'frontend-tests.logic.frame-guides-test
    'frontend-tests.logic.groups-test
+   'frontend-tests.logic.pasting-in-containers-test
    'frontend-tests.plugins.context-shapes-test
    'frontend-tests.print-area-protection-test
-   'frontend-tests.util-range-tree-test
-   'frontend-tests.util-snap-data-test
-   'frontend-tests.util-simple-math-test
-   'frontend-tests.basic-shapes-test
-   'frontend-tests.data.workspace-colors-test
-   'frontend-tests.data.workspace-text-defaults-test
+   'frontend-tests.svg-fills-test
+   'frontend-tests.tokens.import-export-test
    'frontend-tests.tokens.logic.token-actions-test
    'frontend-tests.tokens.logic.token-data-test
-   'frontend-tests.tokens.import-export-test
+   'frontend-tests.tokens.logic.token-remapping-test
    'frontend-tests.tokens.style-dictionary-test
-   'frontend-tests.tokens.token-form-test))
+   'frontend-tests.util-object-test
+   'frontend-tests.util-range-tree-test
+   'frontend-tests.util-simple-math-test
+   'frontend-tests.tokens.workspace-tokens-remap-test
+   'frontend-tests.worker-snap-test))

@@ -104,7 +104,7 @@
     (watch [_ state _]
       (let [page-id (or page-id (:current-page-id state))
             objects (dsh/lookup-page-objects state page-id)
-            ids (->> ids (filter #(contains? objects %)))]
+            ids (->> ids (remove uuid/zero?) (filter #(contains? objects %)))]
         (if (d/not-empty? ids)
           (let [modif-tree (dwm/create-modif-tree ids (ctm/reflow-modifiers))]
             (if (features/active-feature? state "render-wasm/v1")
@@ -235,13 +235,8 @@
   [ids]
   (ptk/reify ::remove-shape-layout
     ptk/WatchEvent
-    (watch [_ state _]
-      (let [objects (dsh/lookup-page-objects state)
-            ids     (->> ids
-                         (remove #(->> %
-                                       (get objects)
-                                       (ctc/is-variant?))))
-            undo-id (js/Symbol)]
+    (watch [_ _ _]
+      (let [undo-id (js/Symbol)]
         (rx/of
          (dwu/start-undo-transaction undo-id)
          (dwsh/update-shapes ids #(apply dissoc % layout-keys))

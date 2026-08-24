@@ -8,14 +8,18 @@
   (:require
    [app.common.data.macros :as dm]
    [app.common.logging :as log]
+   [app.common.types.objects-map]
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.main.data.auth :as da]
+   [app.main.data.design-studio-session-recovery :as dsr]
    [app.main.data.event :as ev]
    [app.main.data.profile :as dp]
    [app.main.data.websocket :as ws]
    [app.main.errors]
+   [app.main.features :as feat]
    [app.main.rasterizer :as thr]
+   [app.main.router :as router]
    [app.main.store :as st]
    [app.main.ui :as ui]
    [app.main.ui.alert]
@@ -28,6 +32,7 @@
    [app.util.dom :as dom]
    [app.util.i18n :as i18n]
    [beicon.v2.core :as rx]
+   [cuerdas.core :as str]
    [debug]
    [features]
    [potok.v2.core :as ptk]
@@ -41,8 +46,7 @@
            :asserts *assert*
            :build-date cf/build-date
            :public-uri (dm/str cf/public-uri))
-  (doseq [flag cf/flags]
-    (log/dbg :hint "flag enabled" :flag (name flag))))
+  (log/inf :hint "enabled flags" :flags (str/join " " (map name cf/flags))))
 
 (declare reinit)
 
@@ -64,20 +68,50 @@
     ptk/WatchEvent
     (watch [_ _ stream]
       (rx/merge
-       (rx/of (ev/initialize)
-              (dp/refresh-profile))
+       (if (contains? cf/flags :audit-log)
+         (rx/of (ev/initialize))
+         (rx/empty))
+
+       (rx/of (dp/refresh-profile))
 
        ;; Watch for profile deletion events
        (->> stream
-            (rx/filter dp/profile-deleted?)
+            (rx/filter dp/profile-deleted-event?)
             (rx/map da/logged-out))
 
+       ;; Clear a previous recovery attempt as soon as the Design
+       ;; Studio profile is authenticated again.
+       (->> stream
+            (rx/filter dp/profile-fetched?)
+            (rx/map deref)
+            (rx/filter dp/is-authenticated?)
+            (rx/map (fn [_] (dsr/clear-recovery-guard))))
+
        ;; Once profile is fetched, initialize all penpot application
-       ;; routes
+       ;; routes, unless an anonymous protected route needs external
+       ;; Design Studio session recovery.
        (->> stream
             (rx/filter dp/profile-fetched?)
             (rx/take 1)
-            (rx/map #(rt/init-routes)))
+            (rx/map deref)
+            (rx/mapcat
+             (fn [profile]
+               (let [decision (dsr/current-startup-decision
+                               profile
+                               (rt/current-route-name)
+                               (router/get-current-href))]
+                 (case (:type decision)
+                   :continue
+                   (if (:clear-guard? decision)
+                     (rx/of (dsr/clear-recovery-guard)
+                            (rt/init-routes))
+                     (rx/of (rt/init-routes)))
+
+                   :recover
+                   (rx/of (dsr/redirect-to-recovery (:href decision)))
+
+                   :fail-closed
+                   (rx/of (router/assign-exception (:error decision))))))))
 
        ;; Once profile fetched and the current user is authenticated,
        ;; proceed to initialize the websockets connection.
@@ -86,14 +120,22 @@
             (rx/map deref)
             (rx/filter dp/is-authenticated?)
             (rx/take 1)
-            (rx/map #(ws/initialize)))))))
+            (rx/map #(ws/initialize)))))
+
+    ptk/EffectEvent
+    (effect [_ state _]
+      (when-not (feat/active-feature? state "render-wasm/v1")
+        (thr/init!)))))
 
 (defn ^:export init
-  []
+  [options]
+  (some-> (unchecked-get options "defaultTranslations")
+          (i18n/set-default-translations))
+
   (mw/init!)
-  (i18n/init! cf/translations)
+  (i18n/init)
   (cur/init-styles)
-  (thr/init!)
+
   (init-ui)
   (st/emit! (plugins/initialize)
             (initialize)))
@@ -112,12 +154,5 @@
 (defn ^:dev/after-load after-load
   []
   (reinit))
-
-;; Reload the UI when the language changes
-(add-watch
- i18n/locale "locale"
- (fn [_ _ old-value current-value]
-   (when (not= old-value current-value)
-     (reinit))))
 
 (set! (.-stackTraceLimit js/Error) 50)

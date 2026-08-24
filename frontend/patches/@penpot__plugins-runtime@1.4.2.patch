@@ -1,0 +1,77 @@
+diff --git a/index.js b/index.js
+index a091cbd219d4e771cfcb80f34897108fe6fae4af..8bfa850ef54314dd1cf8de88080c07cf17c6856c 100644
+--- a/index.js
++++ b/index.js
+@@ -5438,21 +5438,48 @@ function ha(t, e = 335, r = 590) {
+   let { x: p, y: h } = pa(t.wrapper);
+   return p = p + f, h = h + d, t.wrapper.style.transform = `translate(${p}px, ${h}px)`, t.wrapper.style.width = `${e}px`, t.wrapper.style.height = `${r}px`, { width: e, height: r };
+ }
+-const Kl = `
+-<svg width="16"  height="16"xmlns="http://www.w3.org/2000/svg" fill="none"><g class="fills"><rect rx="0" ry="0" width="16" height="16" class="frame-background"/></g><g class="frame-children"><path d="M11.997 3.997 8 8l-3.997 4.003m-.006-8L8 8l4.003 3.997" class="fills"/><g class="strokes"><path d="M11.997 3.997 8 8l-3.997 4.003m-.006-8L8 8l4.003 3.997" style="fill: none; stroke-width: 1; stroke: rgb(143, 157, 163); stroke-opacity: 1; stroke-linecap: round;" class="stroke-shape"/></g></g></svg>`, Yl = 3;
++const podMinimizeSvg = `
++<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" aria-hidden="true"><path d="M3 8h10" style="stroke-width: 1; stroke: rgb(143, 157, 163); stroke-linecap: round;"/></svg>`, podMaximizeSvg = `
++<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1" style="stroke-width: 1; stroke: rgb(143, 157, 163);"/></svg>`, Yl = 3;
+ var Ge, Tt;
+ class Jl extends HTMLElement {
+   constructor() {
+     super();
+     Wr(this, Ge);
+     Wr(this, Tt);
+-    this.wrapper = document.createElement("div"), or(this, Ge, document.createElement("div")), or(this, Tt, null), this.attachShadow({ mode: "open" });
++    this.wrapper = document.createElement("div"), this.isMinimized = !1, this.expandedFrameStyle = null, this.toggleButton = null, or(this, Ge, document.createElement("div")), or(this, Tt, null), this.attachShadow({ mode: "open" });
+   }
+   setTheme(r) {
+     this.wrapper && this.wrapper.setAttribute("data-theme", r);
+   }
+   resize(r, n) {
+-    this.wrapper && ha(this, r, n);
++    this.wrapper && (ha(this, r, n), this.isMinimized && this.expandedFrameStyle && (this.expandedFrameStyle.width = this.wrapper.style.width, this.expandedFrameStyle.height = this.wrapper.style.height, this.applyMinimizedPresentation()));
++  }
++  updateToggleState(r) {
++    this.toggleButton && (this.toggleButton.setAttribute("aria-expanded", String(r)), this.toggleButton.setAttribute("aria-label", r ? "Minimize plugin" : "Maximize plugin"), this.toggleButton.setAttribute("title", r ? "Minimize plugin" : "Maximize plugin"), this.toggleButton.innerHTML = `<div class="${r ? "minimize" : "maximize"}">${r ? podMinimizeSvg : podMaximizeSvg}</div>`);
++  }
++  applyMinimizedPresentation() {
++    this.wrapper.style.height = "40px", this.wrapper.style.blockSize = "40px", this.wrapper.style.minHeight = "40px", this.wrapper.style.minBlockSize = "40px", this.wrapper.style.resize = "none", this.wrapper.style.overflow = "hidden";
++  }
++  minimize(r) {
++    if (this.isMinimized)
++      return;
++    this.expandedFrameStyle = {
++      width: this.wrapper.style.width,
++      inlineSize: this.wrapper.style.inlineSize,
++      height: this.wrapper.style.height,
++      blockSize: this.wrapper.style.blockSize,
++      minHeight: this.wrapper.style.minHeight,
++      minBlockSize: this.wrapper.style.minBlockSize,
++      resize: this.wrapper.style.resize,
++      overflow: this.wrapper.style.overflow
++    }, this.isMinimized = !0, this.applyMinimizedPresentation(), this.updateToggleState(!1), this.shadowRoot && this.shadowRoot.activeElement === r && this.toggleButton && this.toggleButton.focus();
++  }
++  maximize() {
++    if (!this.isMinimized || !this.expandedFrameStyle)
++      return;
++    const r = this.expandedFrameStyle;
++    this.wrapper.style.width = r.width, this.wrapper.style.inlineSize = r.inlineSize, this.wrapper.style.height = r.height, this.wrapper.style.blockSize = r.blockSize, this.wrapper.style.minHeight = r.minHeight, this.wrapper.style.minBlockSize = r.minBlockSize, this.wrapper.style.resize = r.resize, this.wrapper.style.overflow = r.overflow, this.expandedFrameStyle = null, this.isMinimized = !1, this.updateToggleState(!0);
+   }
+   disconnectedCallback() {
+     var r;
+@@ -5476,15 +5503,11 @@ class Jl extends HTMLElement {
+     const c = document.createElement("h1");
+     c.textContent = r, s.appendChild(c);
+     const i = document.createElement("button");
+-    i.setAttribute("type", "button"), i.innerHTML = `<div class="close">${Kl}</div>`, i.addEventListener("click", () => {
+-      this.shadowRoot && this.shadowRoot.dispatchEvent(
+-        new CustomEvent("close", {
+-          composed: !0,
+-          bubbles: !0
+-        })
+-      );
+-    }), s.appendChild(i);
++    i.setAttribute("type", "button"), this.toggleButton = i, this.updateToggleState(!0), s.appendChild(i);
+     const l = document.createElement("iframe");
++    i.addEventListener("click", () => {
++      this.isMinimized ? this.maximize() : this.minimize(l);
++    });
+     l.src = n, l.allow = "", l.sandbox.add(
+       "allow-scripts",
+       "allow-forms",

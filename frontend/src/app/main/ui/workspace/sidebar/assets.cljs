@@ -8,17 +8,15 @@
   (:require-macros [app.main.style :as stl])
   (:require
    [app.common.data.macros :as dm]
-   [app.common.types.components-list :as ctkl]
-   [app.main.data.modal :as modal]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.assets :as dwa]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.components.context-menu-a11y :refer [context-menu*]]
-   [app.main.ui.components.search-bar :refer [search-bar]]
+   [app.main.ui.components.search-bar :refer [search-bar*]]
    [app.main.ui.context :as ctx]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.ds.foundations.assets.icon :as i]
    [app.main.ui.workspace.sidebar.assets.common :as cmm]
    [app.main.ui.workspace.sidebar.assets.file-library :refer [file-library*]]
    [app.util.dom :as dom]
@@ -56,9 +54,8 @@
                (update file :data dissoc :pages-index))
              refs/file))
 
-(mf/defc assets-local-library
-  {::mf/wrap [mf/memo]
-   ::mf/wrap-props false}
+(mf/defc assets-local-library*
+  {::mf/private true}
   [{:keys [filters]}]
   (let [file (mf/deref ref:local-library)]
     [:> file-library*
@@ -68,14 +65,13 @@
       :filters filters}]))
 
 (defn- toggle-values
-  [v [a b]]
+  [v a b]
   (if (= v a) b a))
 
 (mf/defc assets-toolbox*
   {::mf/wrap [mf/memo]}
-  [{:keys [size file-id]}]
-  (let [read-only?     (mf/use-ctx ctx/workspace-read-only?)
-        filters*       (mf/use-state
+  [{:keys [size]}]
+  (let [filters*       (mf/use-state
                         {:term ""
                          :section "all"
                          :ordering (dwa/get-current-assets-ordering)
@@ -88,16 +84,12 @@
         section        (:section filters)
         ordering       (:ordering filters)
         reverse-sort?  (= :desc ordering)
-        libs           (mf/deref refs/libraries)
-        num-libs       (count libs)
-        file           (get libs file-id)
-        components     (mf/with-memo [file] (ctkl/components (:data file)))
 
         toggle-ordering
         (mf/use-fn
          (mf/deps ordering)
          (fn []
-           (let [new-value (toggle-values ordering [:asc :desc])]
+           (let [new-value (toggle-values ordering :asc :desc)]
              (swap! filters* assoc :ordering new-value)
              (dwa/set-current-assets-ordering! new-value))))
 
@@ -105,7 +97,7 @@
         (mf/use-fn
          (mf/deps list-style)
          (fn []
-           (let [new-value (toggle-values list-style [:thumbs :list])]
+           (let [new-value (toggle-values list-style :thumbs :list)]
              (swap! filters* assoc :list-style new-value)
              (dwa/set-current-assets-list-style! new-value))))
 
@@ -125,70 +117,61 @@
              (st/emit! (dw/clear-assets-section-open))
              (swap! filters* assoc :section value :open-menu false))))
 
-        show-libraries-dialog
-        (mf/use-fn
-         (mf/deps file-id)
-         (fn []
-           (modal/show! :libraries-dialog {:file-id file-id})))
-
         on-open-menu
         (mf/use-fn  #(swap! filters* update :open-menu not))
 
         on-menu-close
         (mf/use-fn #(swap! filters* assoc :open-menu false))
 
+        ;; Memoize options to prevent infinite re-render loops when dev-tools are open.
+        ;;
+        ;; Problem: When dev-tools are open, they constantly monitor the application state,
+        ;; triggering frequent updates to okulary refs. This causes the parent component to
+        ;; re-render constantly, recreating the options array on every render.
+        ;;
+        ;; The context-menu* component has a mf/with-effect that depends on [options].
+        ;; When options are recreated (even with identical content), the effect runs,
+        ;; updating the internal state, which triggers another re-render, creating
+        ;; an infinite loop: render -> new options -> effect -> state update -> render...
         options
-        [{:name    (tr "workspace.assets.box-filter-all")
-          :id      "all"
-          :handler on-section-filter-change}
-         {:name    (tr "workspace.assets.components")
-          :id      "components"
-          :handler on-section-filter-change}
+        (mf/with-memo [on-section-filter-change]
+          [{:name    (tr "workspace.assets.box-filter-all")
+            :id      "all"
+            :handler on-section-filter-change}
+           {:name    (tr "workspace.assets.components")
+            :id      "components"
+            :handler on-section-filter-change}
+           {:name    (tr "workspace.assets.colors")
+            :id      "colors"
+            :handler on-section-filter-change}
+           {:name    (tr "workspace.assets.typography")
+            :id      "typographies"
+            :handler on-section-filter-change}])]
 
-         {:name    (tr "workspace.assets.colors")
-          :id      "colors"
-          :handler on-section-filter-change}
-
-         {:name    (tr "workspace.assets.typography")
-          :id      "typographies"
-          :handler on-section-filter-change}]]
-
-    [:article  {:class (stl/css :assets-bar)}
+    [:article {:class (stl/css :assets-bar)}
      [:div {:class (stl/css :assets-header)}
-;;       (when-not ^boolean read-only?
-;;         (if (and (= num-libs 1) (empty? components))
-;;           [:button {:class (stl/css :add-library-button)
-;;                     :on-click show-libraries-dialog
-;;                     :data-testid "libraries"}
-;;            (tr "workspace.assets.add-library")]
-;;
-;;           [:button {:class (stl/css :libraries-button)
-;;                     :on-click show-libraries-dialog
-;;                     :data-testid "libraries"}
-;;            (tr "workspace.assets.manage-library")]))
-
-
       [:div {:class (stl/css :search-wrapper)}
-       [:& search-bar {:on-change on-search-term-change
-                       :value term
-                       :placeholder (tr "workspace.assets.search")}
-        [:button
-         {:on-click on-open-menu
-          :title (tr "workspace.assets.filter")
-          :class (stl/css-case :section-button true
-                               :opened menu-open?)}
-         i/filter-icon]]
-       [:> context-menu*
-        {:on-close on-menu-close
-         :selectable true
-         :selected section
-         :show menu-open?
-         :fixed true
-         :min-width true
-         :width size
-         :top 158
-         :left 18
-         :options options}]
+       [:> search-bar* {:on-change on-search-term-change
+                        :value term
+                        :placeholder (tr "workspace.assets.search")}
+        [:> icon-button* {:variant "secondary"
+                          :icon i/filter
+                          :class (stl/css :filter-button)
+                          :aria-pressed menu-open?
+                          :aria-label (tr "workspace.assets.filter")
+                          :on-click on-open-menu}]]
+
+       [:> context-menu* {:on-close on-menu-close
+                          :selectable true
+                          :selected section
+                          :show menu-open?
+                          :fixed true
+                          :min-width true
+                          :width size
+                          :top 158
+                          :left 18
+                          :options options}]
+
        [:> icon-button* {:variant "ghost"
                          :aria-label (tr "workspace.assets.sort")
                          :on-click toggle-ordering
@@ -198,5 +181,5 @@
       [:& (mf/provider cmm/assets-toggle-ordering) {:value toggle-ordering}
        [:& (mf/provider cmm/assets-toggle-list-style) {:value toggle-list-style}
         [:*
-         [:& assets-local-library {:filters filters}]
+         [:> assets-local-library* {:filters filters}]
          [:> assets-libraries* {:filters filters}]]]]]]))

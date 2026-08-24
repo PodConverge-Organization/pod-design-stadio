@@ -19,10 +19,9 @@
    [app.common.schema.generators :as sg]
    [app.common.transit :as t]
    [app.common.types.color :as clr]
-   [app.common.types.fills :refer [schema:fill fill->color]]
+   [app.common.types.fills :refer [schema:fills fill->color]]
    [app.common.types.grid :as ctg]
    [app.common.types.path :as path]
-   [app.common.types.path.segment :as path.segment]
    [app.common.types.plugins :as ctpg]
    [app.common.types.shape.attrs :refer [default-color]]
    [app.common.types.shape.blur :as ctsb]
@@ -37,8 +36,7 @@
    [app.common.uuid :as uuid]
    [clojure.set :as set]))
 
-(defonce ^:dynamic *wasm-sync* false)
-
+(defonce ^:dynamic *shape-changes* nil)
 (defonce wasm-enabled? false)
 (defonce wasm-create-shape (constantly nil))
 
@@ -119,8 +117,6 @@
 (def schema:points
   [:vector {:gen/max 4 :gen/min 4} ::gpt/point])
 
-;; FIXME: the register is necessary until this is moved to a separated
-;; ns because it is used on shapes.text
 (def valid-stroke-attrs
   "A set used for proper check if color should contain only one of the
   attrs listed in this set."
@@ -156,10 +152,8 @@
   (sm/keys schema:stroke-attrs))
 
 (def schema:stroke
-  (sm/register!
-   ^{::sm/type ::stroke}
-   [:and schema:stroke-attrs
-    [:fn has-valid-stroke-attrs?]]))
+  [:and schema:stroke-attrs
+   [:fn has-valid-stroke-attrs?]])
 
 (def check-stroke
   (sm/check-fn schema:stroke))
@@ -184,7 +178,7 @@
    [:height ::sm/safe-number]])
 
 (def schema:shape-generic-attrs
-  [:map {:title "ShapeAttrs"}
+  [:map {:title "ShapeGenericAttrs"}
    [:page-id {:optional true} ::sm/uuid]
    [:component-id {:optional true}  ::sm/uuid]
    [:component-file {:optional true} ::sm/uuid]
@@ -198,8 +192,7 @@
    [:locked {:optional true} :boolean]
    [:hidden {:optional true} :boolean]
    [:masked-group {:optional true} :boolean]
-   [:fills {:optional true}
-    [:vector {:gen/max 2} schema:fill]]
+   [:fills {:optional true} schema:fills]
    [:proportion {:optional true} ::sm/safe-number]
    [:proportion-lock {:optional true} :boolean]
    [:constraints-h {:optional true}
@@ -213,22 +206,22 @@
    [:r4 {:optional true} ::sm/safe-number]
    [:opacity {:optional true} ::sm/safe-number]
    [:grids {:optional true}
-    [:vector {:gen/max 2} ::ctg/grid]]
+    [:vector {:gen/max 2} ctg/schema:grid]]
    [:exports {:optional true}
-    [:vector {:gen/max 2} ::ctse/export]]
+    [:vector {:gen/max 2} ctse/schema:export]]
    [:strokes {:optional true}
     [:vector {:gen/max 2} schema:stroke]]
    [:blend-mode {:optional true}
     [::sm/one-of blend-modes]]
    [:interactions {:optional true}
-    [:vector {:gen/max 2} ::ctsi/interaction]]
+    [:vector {:gen/max 2} ctsi/schema:interaction]]
    [:shadow {:optional true}
     [:vector {:gen/max 1} ctss/schema:shadow]]
-   [:blur {:optional true} ::ctsb/blur]
+   [:blur {:optional true} ctsb/schema:blur]
    [:grow-type {:optional true}
     [::sm/one-of grow-types]]
    [:applied-tokens {:optional true} cto/schema:applied-tokens]
-   [:plugin-data {:optional true} ::ctpg/plugin-data]])
+   [:plugin-data {:optional true} ctpg/schema:plugin-data]])
 
 (def schema:group-attrs
   [:map {:title "GroupAttrs"}
@@ -274,7 +267,8 @@
 
 (def ^:private schema:text-attrs
   [:map {:title "TextAttrs"}
-   [:content {:optional true} [:maybe ::ctsx/content]]])
+   [:position-data {:optional true} [:maybe ctsx/schema:position-data]]
+   [:content {:optional true} [:maybe ctsx/schema:content]]])
 
 (defn- decode-shape
   [o]
@@ -326,8 +320,8 @@
      schema:shape-generic-attrs
      schema:shape-geom-attrs
      schema:shape-base-attrs
-     ::ctv/variant-shape
-     ::ctv/variant-container]]
+     ctv/schema:variant-shape
+     ctv/schema:variant-container]]
 
    [:bool
     [:merge {:title "BoolShape"}
@@ -384,13 +378,11 @@
      schema:shape-base-attrs]]])
 
 (def schema:shape
-  (sm/register!
-   ^{::sm/type ::shape}
-   [:and {:title "Shape"
-          :gen/gen (shape-generator)
-          :decode/json {:leave decode-shape}}
-    [:fn shape?]
-    schema:shape-attrs]))
+  [:and {:title "Shape"
+         :gen/gen (shape-generator)
+         :decode/json {:leave decode-shape}}
+   [:fn shape?]
+   schema:shape-attrs])
 
 (def check-shape-generic-attrs
   (sm/check-fn schema:shape-generic-attrs))
@@ -418,7 +410,7 @@
   #{:page-id :component-id :component-file :component-root :main-instance
     :remote-synced :shape-ref :touched :blocked :collapsed :locked
     :hidden :masked-group :fills :proportion :proportion-lock :constraints-h
-    :constraints-v :fixed-scroll :r1 :r2 :r3 :r4 :opacity :grids :exports
+    :constraints-v :fixed-scroll :r1 :r2 :r3 :r4 :rotation :opacity :grids :exports
     :strokes :blend-mode :interactions :shadow :blur :grow-type :applied-tokens
     :plugin-data})
 
@@ -593,12 +585,16 @@
 (defn setup-path
   [{:keys [content selrect points] :as shape}]
   (let [selrect (or selrect
-                    (path.segment/content->selrect content)
+                    (path/calc-selrect content)
                     (grc/make-rect))
-        points  (or points  (grc/rect->points selrect))]
+        points  (or points
+                    (grc/rect->points selrect))
+        ;; Ensure we hace correct type here for Path Data
+        content (path/content content)]
     (-> shape
         (assoc :selrect selrect)
-        (assoc :points points))))
+        (assoc :points points)
+        (assoc :content content))))
 
 (defn- setup-image
   [{:keys [metadata] :as shape}]

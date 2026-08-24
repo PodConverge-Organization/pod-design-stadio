@@ -1,16 +1,18 @@
-mod gradient;
-mod image;
-mod solid;
+use macros::ToJs;
 
 use crate::mem;
 use crate::shapes;
 use crate::with_current_shape_mut;
 use crate::STATE;
 
+mod gradient;
+mod image;
+mod solid;
+
 const RAW_FILL_DATA_SIZE: usize = std::mem::size_of::<RawFillData>();
 
 #[repr(C, u8, align(4))]
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, ToJs)]
 #[allow(dead_code)]
 pub enum RawFillData {
     Solid(solid::RawSolidData) = 0x00,
@@ -51,6 +53,7 @@ impl TryFrom<&[u8]> for RawFillData {
     }
 }
 
+// FIXME: return Result
 pub fn parse_fills_from_bytes(buffer: &[u8], num_fills: usize) -> Vec<shapes::Fill> {
     buffer
         .chunks_exact(RAW_FILL_DATA_SIZE)
@@ -67,8 +70,12 @@ pub fn parse_fills_from_bytes(buffer: &[u8], num_fills: usize) -> Vec<shapes::Fi
 pub extern "C" fn set_shape_fills() {
     with_current_shape_mut!(state, |shape: &mut Shape| {
         let bytes = mem::bytes();
-        let fills = parse_fills_from_bytes(&bytes, bytes.len() / RAW_FILL_DATA_SIZE);
+        // The first byte contains the actual number of fills
+        let num_fills = bytes.first().copied().unwrap_or(0) as usize;
+        // Skip the first 4 bytes (header with fill count) and parse only the actual fills
+        let fills = parse_fills_from_bytes(&bytes[4..], num_fills);
         shape.set_fills(fills);
+        mem::free_bytes();
     });
 }
 

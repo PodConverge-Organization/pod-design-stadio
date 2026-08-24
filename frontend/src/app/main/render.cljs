@@ -67,7 +67,7 @@
     :height (:height vbox)
     :fill color}])
 
-(defn- calculate-dimensions
+(defn calculate-dimensions
   [objects aspect-ratio]
   (let [root-objects (ctst/get-root-objects objects)]
     (if (empty? root-objects)
@@ -133,7 +133,7 @@
       [{:keys [shape] :as props}]
       (let [childs (mapv #(get objects %) (:shapes shape))]
         (if (and (map? (:content shape))
-                ;;  tspan shouldn't be contained in a group or have svg defs
+                 ;;  tspan shouldn't be contained in a group or have svg defs
                  (not= :tspan (get-in shape [:content :tag]))
                  (or (= :svg (get-in shape [:content :tag]))
                      (contains? shape :svg-attrs)))

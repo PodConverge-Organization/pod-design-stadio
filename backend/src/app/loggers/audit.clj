@@ -9,6 +9,7 @@
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
+   [app.common.json :as json]
    [app.common.logging :as l]
    [app.common.schema :as sm]
    [app.common.time :as ct]
@@ -25,7 +26,8 @@
    [app.util.inet :as inet]
    [app.util.services :as-alias sv]
    [app.worker :as wrk]
-   [cuerdas.core :as str]))
+   [cuerdas.core :as str]
+   [yetti.request :as yreq]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HELPERS
@@ -78,23 +80,40 @@
          (remove #(contains? reserved-props (key %))))
         props))
 
-(defn event-from-rpc-params
-  "Create a base event skeleton with pre-filled some important
-  data that can be extracted from RPC params object"
-  [params]
-  (let [context {:external-session-id (::rpc/external-session-id params)
-                 :external-event-origin (::rpc/external-event-origin params)
-                 :triggered-by (::rpc/handler-name params)}]
-    {::type "action"
-     ::profile-id (::rpc/profile-id params)
-     ::ip-addr (::rpc/ip-addr params)
-     ::context (d/without-nils context)}))
+(defn get-external-session-id
+  [request]
+  (when-let [session-id (yreq/get-header request "x-external-session-id")]
+    (when-not (or (> (count session-id) 256)
+                  (= session-id "null")
+                  (str/blank? session-id))
+      session-id)))
+
+(defn- get-client-event-origin
+  [request]
+  (when-let [origin (yreq/get-header request "x-event-origin")]
+    (when-not (or (= origin "null")
+                  (str/blank? origin))
+      (str/prune origin 200))))
+
+(defn get-client-user-agent
+  [request]
+  (when-let [user-agent (yreq/get-header request "user-agent")]
+    (str/prune user-agent 500)))
+
+(defn- get-client-version
+  [request]
+  (when-let [origin (yreq/get-header request "x-frontend-version")]
+    (when-not (or (= origin "null")
+                  (str/blank? origin))
+      (str/prune origin 100))))
 
 ;; --- SPECS
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; COLLECTOR API
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(declare ^:private prepare-context-from-request)
 
 ;; Defines a service that collects the audit/activity log using
 ;; internal database. Later this audit log can be transferred to
@@ -109,6 +128,8 @@
    [::props {:optional true} [:map-of :keyword :any]]
    [::context {:optional true} [:map-of :keyword :any]]
    [::tracked-at {:optional true} ::ct/inst]
+   [::created-at {:optional true} ::ct/inst]
+   [::source {:optional true} ::sm/text]
    [::webhooks/event? {:optional true} ::sm/boolean]
    [::webhooks/batch-timeout {:optional true} ::ct/duration]
    [::webhooks/batch-key {:optional true}
@@ -116,6 +137,9 @@
 
 (def ^:private check-event
   (sm/check-fn schema:event))
+
+(def valid-event?
+  (sm/validator schema:event))
 
 (defn prepare-event
   [cfg mdata params result]
@@ -126,23 +150,15 @@
                          (::rpc/profile-id params)
                          uuid/zero)
 
-        session-id   (get params ::rpc/external-session-id)
-        event-origin (get params ::rpc/external-event-origin)
         props        (-> (or (::replace-props resultm)
                              (-> params
                                  (merge (::props resultm))
                                  (dissoc :profile-id)
                                  (dissoc :type)))
-
                          (clean-props))
 
-        token-id     (::actoken/id request)
-        context      (-> (::context resultm)
-                         (assoc :external-session-id session-id)
-                         (assoc :external-event-origin event-origin)
-                         (assoc :access-token-id (some-> token-id str))
-                         (d/without-nils))
-
+        context      (merge (::context resultm)
+                            (prepare-context-from-request request))
         ip-addr      (inet/parse-request request)]
 
     {::type (or (::type resultm)
@@ -172,6 +188,38 @@
          (::webhooks/event? resultm)
          false)}))
 
+(defn- prepare-context-from-request
+  "Prepare backend event context from request"
+  [request]
+  (let [client-event-origin (get-client-event-origin request)
+        client-version      (get-client-version request)
+        client-user-agent   (get-client-user-agent request)
+        session-id          (get-external-session-id request)
+        key-id              (::http/auth-key-id request)
+        token-id            (::actoken/id request)
+        token-type          (::actoken/type request)]
+    (d/without-nils
+     {:external-session-id session-id
+      :initiator (or key-id "app")
+      :access-token-id (some-> token-id str)
+      :access-token-type (some-> token-type str)
+      :client-event-origin client-event-origin
+      :client-user-agent client-user-agent
+      :client-version client-version
+      :version (:full cf/version)})))
+
+(defn event-from-rpc-params
+  "Create a base event skeleton with pre-filled some important
+  data that can be extracted from RPC params object"
+  [params]
+  (let [context (some-> params meta ::http/request prepare-context-from-request)
+        event   {::type "action"
+                 ::profile-id (or (::rpc/profile-id params) uuid/zero)
+                 ::ip-addr (::rpc/ip-addr params)}]
+    (cond-> event
+      (some? context)
+      (assoc ::context context))))
+
 (defn- event->params
   [event]
   (let [params {:id (uuid/next)
@@ -188,7 +236,7 @@
       (some? tnow)
       (assoc :tracked-at tnow))))
 
-(defn- append-audit-entry!
+(defn- append-audit-entry
   [cfg params]
   (let [params (-> params
                    (update :props db/tjson)
@@ -198,17 +246,26 @@
 
 (defn- handle-event!
   [cfg event]
-  (let [params (event->params event)
-        tnow   (ct/now)]
+  (let [tnow   (ct/now)
+        params (-> (event->params event)
+                   (assoc :created-at tnow)
+                   (update :tracked-at #(or % tnow)))]
+
+    (when (contains? cf/flags :audit-log-logger)
+      (l/log! ::l/logger "app.audit"
+              ::l/level :info
+              :profile-id (str (::profile-id event))
+              :ip-addr (str (::ip-addr event))
+              :type (::type event)
+              :name (::name event)
+              :props (json/encode (::props event) :key-fn json/write-camel-key)
+              :context (json/encode (::context event) :key-fn json/write-camel-key)))
 
     (when (contains? cf/flags :audit-log)
       ;; NOTE: this operation may cause primary key conflicts on inserts
       ;; because of the timestamp precission (two concurrent requests), in
       ;; this case we just retry the operation.
-      (let [params (-> params
-                       (assoc :created-at tnow)
-                       (update :tracked-at #(or % tnow)))]
-        (append-audit-entry! cfg params)))
+      (append-audit-entry cfg params))
 
     (when (and (or (contains? cf/flags :telemetry)
                    (cf/get :telemetry-enabled))
@@ -219,11 +276,9 @@
       ;;
       ;; NOTE: this is only executed when general audit log is disabled
       (let [params (-> params
-                       (assoc :created-at tnow)
-                       (update :tracked-at #(or % tnow))
                        (assoc :props {})
                        (assoc :context {}))]
-        (append-audit-entry! cfg params)))
+        (append-audit-entry cfg params)))
 
     (when (and (contains? cf/flags :webhooks)
                (::webhooks/event? event))
@@ -277,4 +332,4 @@
                            params (-> (event->params event)
                                       (assoc :created-at tnow)
                                       (update :tracked-at #(or % tnow)))]
-                       (append-audit-entry! cfg params)))))))
+                       (append-audit-entry cfg params)))))))
