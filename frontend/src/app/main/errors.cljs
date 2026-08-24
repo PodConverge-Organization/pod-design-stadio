@@ -125,6 +125,7 @@
   [error]
   (let [message (tr "errors.auth.unable-to-login")
         decision (dsr/current-authentication-error-decision
+                  error
                   (rt/lookup-name @st/state)
                   (rt/get-current-href))]
     (case (:type decision)

@@ -98,15 +98,24 @@
       :return-to return-to
       :recovery-attempted? recovery-attempted?})))
 
+(defn recoverable-runtime-authentication-error?
+  [error]
+  (and (= :authentication (:type error))
+       (= :authentication-required (:code error))))
+
 (defn authentication-error-decision
-  [{:keys [route-name recovery-uri return-to recovery-attempted?]}]
+  [{:keys [error route-name recovery-uri return-to recovery-attempted?]}]
   (cond
-    (protected-route? route-name)
+    (and (protected-route? route-name)
+         (recoverable-runtime-authentication-error? error))
     (protected-recovery-decision
      {:route-name route-name
       :recovery-uri recovery-uri
       :return-to return-to
       :recovery-attempted? recovery-attempted?})
+
+    (protected-route? route-name)
+    {:type :local-exception}
 
     (viewer-route? route-name)
     {:type :local-exception}
@@ -124,9 +133,10 @@
     :recovery-attempted? (recovery-attempted?)}))
 
 (defn current-authentication-error-decision
-  [route-name return-to]
+  [error route-name return-to]
   (authentication-error-decision
-   {:route-name route-name
+   {:error error
+    :route-name route-name
     :recovery-uri cf/design-studio-recovery-uri
     :return-to return-to
     :recovery-attempted? (recovery-attempted?)}))

@@ -23,6 +23,13 @@
 (def return-to
   "https://design.example.com/#/workspace?team-id=team&file-id=file&page-id=page")
 
+(def session-authentication-error
+  {:type :authentication
+   :code :authentication-required})
+
+(def local-authentication-error
+  {:type :authentication})
+
 (defn startup-decision
   [profile route-name & {:keys [attempted? uri]
                          :or {attempted? false
@@ -35,11 +42,13 @@
     :recovery-attempted? attempted?}))
 
 (defn authentication-decision
-  [route-name & {:keys [attempted? uri]
+  [route-name & {:keys [attempted? error uri]
                  :or {attempted? false
+                      error session-authentication-error
                       uri recovery-uri}}]
   (dsr/authentication-error-decision
-   {:route-name route-name
+   {:error error
+    :route-name route-name
     :recovery-uri uri
     :return-to return-to
     :recovery-attempted? attempted?}))
@@ -130,6 +139,12 @@
   (t/is (= :recover (:type (authentication-decision :workspace))))
   (t/is (= :recover (:type (authentication-decision :dashboard-recent))))
   (t/is (= :recover (:type (authentication-decision :settings-profile))))
+  (t/is (= :local-exception
+           (:type (authentication-decision :workspace :error local-authentication-error))))
+  (t/is (= :local-exception
+           (:type (authentication-decision :workspace
+                                           :error {:type :authentication
+                                                   :code :unknown-authentication-code}))))
   (t/is (= :local-exception (:type (authentication-decision :viewer))))
   (t/is (= :local-exception (:type (authentication-decision :viewer-legacy))))
   (t/is (= :logout (:type (authentication-decision :auth-login))))

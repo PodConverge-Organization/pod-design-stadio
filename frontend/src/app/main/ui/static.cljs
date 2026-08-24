@@ -38,6 +38,9 @@
 ;; FIXME: this is a workaround until we export this class on beicon library
 (def TimeoutError rxjs/TimeoutError)
 
+(def ^:private podconverge-projects-uri
+  "https://app.podconverge.com/panel/projects")
+
 (mf/defc error-container*
   {::mf/props :obj}
   [{:keys [children]}]
@@ -45,7 +48,7 @@
     [:section {:class (stl/css :exception-layout)}
      [:a
       {:class (stl/css :exception-header)
-       :href "https://app.podconverge.com/panel/projects"}
+       :href podconverge-projects-uri}
       [:> raw-svg* {:id "podconverge-logo-icon" :class (stl/css :podconverge-logo)}]
       (when profile-id
         [:div {:class (stl/css :go-back-wrapper)}
@@ -72,7 +75,7 @@
 
 (mf/defc request-dialog*
   {::mf/props :obj}
-  [{:keys [title content button-text on-button-click cancel-text on-close]}]
+  [{:keys [title content button-text on-button-click cancel-text on-cancel-click on-close]}]
   (let [on-click (or on-button-click on-close)]
     [:div {:class (stl/css :overlay)}
      [:div {:class (stl/css :dialog)}
@@ -85,7 +88,7 @@
       [:div {:class (stl/css :sign-info)}
        (when cancel-text
          [:button {:class (stl/css :cancel-button)
-                   :on-click on-close}
+                   :on-click (or on-cancel-click on-close)}
           cancel-text])
        [:button {:on-click on-click} button-text]]]]))
 
@@ -100,6 +103,10 @@
          (fn []
            (let [team-id (:default-team-id profile)]
              (st/emit! (dcm/go-to-dashboard-recent :team-id team-id)))))
+
+        on-go-to-podconverge
+        (mf/use-fn
+         #(set! (.-href js/location) podconverge-projects-uri))
 
         on-success
         (mf/use-fn
@@ -126,24 +133,28 @@
       is-default
       [:> request-dialog* {:title (tr "not-found.no-permission.project")
                            :button-text (tr "not-found.no-permission.go-dashboard")
+                           :on-button-click on-go-to-podconverge
                            :on-close on-close}]
 
       (and (some? file-id) (:already-requested requested))
       [:> request-dialog* {:title (tr "not-found.no-permission.already-requested.file")
                            :content [(tr "not-found.no-permission.already-requested.or-others.file")]
                            :button-text (tr "not-found.no-permission.go-dashboard")
+                           :on-button-click on-go-to-podconverge
                            :on-close on-close}]
 
       (:already-requested requested)
       [:> request-dialog* {:title (tr "not-found.no-permission.already-requested.project")
                            :content [(tr "not-found.no-permission.already-requested.or-others.project")]
                            :button-text (tr "not-found.no-permission.go-dashboard")
+                           :on-button-click on-go-to-podconverge
                            :on-close on-close}]
 
       (:sent requested)
       [:> request-dialog* {:title (tr "not-found.no-permission.done.success")
                            :content [(tr "not-found.no-permission.done.remember")]
                            :button-text (tr "not-found.no-permission.go-dashboard")
+                           :on-button-click on-go-to-podconverge
                            :on-close on-close}]
 
       (some? file-id)
@@ -153,6 +164,7 @@
                            :button-text (tr "not-found.no-permission.ask")
                            :on-button-click on-request-access
                            :cancel-text (tr "not-found.no-permission.go-dashboard")
+                           :on-cancel-click on-go-to-podconverge
                            :on-close on-close}]
 
       (some? team-id)
@@ -162,6 +174,7 @@
                            :button-text (tr "not-found.no-permission.ask")
                            :on-button-click on-request-access
                            :cancel-text (tr "not-found.no-permission.go-dashboard")
+                           :on-cancel-click on-go-to-podconverge
                            :on-close on-close}])))
 
 (mf/defc not-found*

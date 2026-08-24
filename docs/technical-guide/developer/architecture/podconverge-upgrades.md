@@ -26,6 +26,8 @@ When recovery is allowed, Design Studio redirects to the configured Pod frontend
 
 Recovery is bounded by a one-attempt-per-tab `sessionStorage` guard. The guard is written synchronously immediately before the external redirect, cleared after a later authenticated profile result, and prevents repeated redirects while the Design Studio session remains invalid. Missing or invalid recovery configuration fails closed to a local authentication/recovery error state without external redirect.
 
+Runtime authentication errors trigger protected-route recovery only when the error is the backend session-authentication marker `{:type :authentication :code :authentication-required}`. Local synthetic authentication errors, including access-denied conditions for teams or files the authenticated user cannot open, remain in the existing local exception flow so the request-access dialog is shown.
+
 Production must deploy prebuilt immutable images, not build release images during deployment. Deployment must not depend on pulling changes into the currently dirty production checkout.
 
 This CI work item does not authorize merging PR #15 or deploying it to production.
