@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.constants)
 
@@ -15,8 +15,14 @@
 (def grid-x-axis 10)
 (def grid-y-axis 10)
 
-(def sidebar-default-width 318)
-(def sidebar-default-max-width 768)
+;; Before changing these values also check:
+;; frontend/src/app/main/ui/workspace/sidebar/common/sidebar.scss
+
+(def right-sidebar-default-width 318)
+(def right-sidebar-default-max-width 768)
+
+(def left-sidebar-default-width 318)
+(def left-sidebar-default-max-width 500)
 
 (def page-metadata
   "Default data for page metadata."
@@ -142,17 +148,17 @@
     :width 768
     :height 1024}
    {:name "Google Pixel 7 Pro"
-    :width 1440
-    :height 3120}
+    :width 412
+    :height 892}
    {:name "Google Pixel 6a/6"
-    :width 1080
-    :height 2400}
+    :width 412
+    :height 915}
    {:name "Google Pixel 4a/5"
     :width 393
     :height 851}
    {:name "Samsung Galaxy S22"
-    :width 1080
-    :height 2340}
+    :width 360
+    :height 780}
    {:name "Samsung Galaxy S20+"
     :width 384
     :height 854}
@@ -295,6 +301,43 @@
     :width 1280
     :height 720}])
 
-(def zoom-half-pixel-precision 8)
-
 (def max-input-length 255)
+
+(def ^:const default-slow-progress-threshold
+  "A constant value that represents a threshold in milliseconds when a
+  normal progress becomes tagged as slow if no event received in the
+  specified amount of time"
+  1000)
+
+;; ------------------------------------------------
+;; Typography
+;; ------------------------------------------------
+
+(def ^:const font-size 11)
+
+;; ------------------------------------------------
+;; Colors (CSS custom properties)
+;; ------------------------------------------------
+
+(def ^:const select-color "var(--color-accent-tertiary)")
+
+(def ^:const distance-color "var(--color-accent-quaternary)")
+(def ^:const distance-text-color "var(--app-white)")
+
+;; ------------------------------------------------
+;; Selection rectangle & guides
+;; ------------------------------------------------
+
+(def ^:const selection-rect-width 1)
+
+;; ------------------------------------------------
+;; Transform preview sampling
+;; ------------------------------------------------
+
+(def ^:const default-sample-time
+  "Default time in ms for the sampling of transforms, this caps to one per frame the preview of modifiers"
+  16)
+
+(def ^:const resize-sample-time default-sample-time)
+(def ^:const rotation-sample-time default-sample-time)
+(def ^:const move-sample-time default-sample-time)

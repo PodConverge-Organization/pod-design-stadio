@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.viewer.header
   (:require-macros [app.main.style :as stl])
@@ -12,11 +12,12 @@
    [app.main.data.shortcuts :as scd]
    [app.main.data.viewer :as dv]
    [app.main.data.viewer.shortcuts :as sc]
+   [app.main.router :as rt]
    [app.main.store :as st]
    [app.main.ui.components.dropdown :refer [dropdown]]
-   [app.main.ui.exports.assets :refer [export-progress-widget]]
+   [app.main.ui.exports.assets :refer [progress-widget]]
    [app.main.ui.formats :as fmt]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.main.ui.viewer.comments :refer [comments-menu]]
    [app.main.ui.viewer.interactions :refer [flows-menu* interactions-menu*]]
    [app.util.dom :as dom]
@@ -29,9 +30,9 @@
                (dm/get-in state [:viewer-local :fullscreen?]))
              st/state))
 
-(defn open-login-dialog
+(defn redirect-to-login
   []
-  (modal/show! :login-register {}))
+  (st/emit! (rt/nav :auth-login {})))
 
 (mf/defc zoom-widget
   {::mf/memo true
@@ -86,13 +87,13 @@
          [:button {:class (stl/css :zoom-btn)
                    :on-click on-decrease}
           [:span {:class (stl/css :zoom-icon)}
-           i/remove-icon]]
+           deprecated-icon/remove-icon]]
          [:p  {:class (stl/css :zoom-text)}
           (fmt/format-percent zoom)]
          [:button {:class (stl/css :zoom-btn)
                    :on-click on-increase}
           [:span {:class (stl/css :zoom-icon)}
-           i/add]]]
+           deprecated-icon/add]]]
         [:button {:class (stl/css :reset-btn)
                   :on-click on-zoom-reset}
          (tr "workspace.header.reset-zoom")]]
@@ -167,7 +168,7 @@
         (open-share-dialog)))
 
     [:div {:class (stl/css :options-zone)}
-     [:& export-progress-widget]
+     [:& progress-widget]
 
      (case section
        :interactions [:*
@@ -190,13 +191,13 @@
      (when (:in-team permissions)
        [:span {:on-click go-to-workspace
                :class (stl/css :edit-btn)}
-        i/curve])
+        deprecated-icon/curve])
 
      [:span {:title (tr "viewer.header.fullscreen")
              :class (stl/css-case :fullscreen-btn true
                                   :selected fullscreen?)
              :on-click toggle-fullscreen}
-      i/expand]
+      deprecated-icon/expand]
 
      (when (:in-team permissions)
        [:button {:on-click open-share-dialog
@@ -204,7 +205,7 @@
         (tr "labels.share")])
 
      (when-not (:is-logged permissions)
-       [:span {:on-click open-login-dialog
+       [:span {:on-click redirect-to-login
                :class (stl/css :go-log-btn)} (tr "labels.log-or-sign")])]))
 
 (mf/defc header-sitemap
@@ -240,7 +241,7 @@
              :on-click open-dropdown}
        [:span  {:class (stl/css :breadcrumb-text)}
         (dm/str file-name " / " page-name)]
-       [:span {:class (stl/css :icon)} i/arrow]
+       [:span {:class (stl/css :icon)} deprecated-icon/arrow]
        [:span "/"]
        [:& dropdown {:show @show-dropdown?
                      :on-close close-dropdown}
@@ -254,15 +255,15 @@
             [:span {:class (stl/css :label)}
              (get-in file [:data :pages-index id :name])]
             (when (= page-id id)
-              [:span {:class (stl/css :icon-check)} i/tick])])]]]
+              [:span {:class (stl/css :icon-check)} deprecated-icon/tick])])]]]
       [:div {:class (stl/css :current-frame)
              :id "current-frame"
              :on-click toggle-thumbnails}
        [:span {:class (stl/css :frame-name)} frame-name]
-       [:span {:class (stl/css :icon)} i/arrow]]]]))
+       [:span {:class (stl/css :icon)} deprecated-icon/arrow]]]]))
 
 (def ^:private podconverge-logo-icon
-  (i/icon-xref :podconverge-logo-icon (stl/css :logo-icon)))
+  (deprecated-icon/icon-xref :podconverge-logo-icon (stl/css :logo-icon)))
 
 
 (mf/defc header
@@ -270,15 +271,6 @@
   (let [go-to-dashboard
         (mf/use-fn
          #(st/emit! (dv/go-to-dashboard)))
-
-        go-to-inspect
-        (mf/use-fn
-         (mf/deps permissions)
-         (fn []
-           (if (:is-logged permissions)
-             (st/emit! dv/close-thumbnails-panel
-                       (dv/go-to-section :inspect))
-             (open-login-dialog))))
 
         navigate
         (mf/use-fn
@@ -289,7 +281,7 @@
                              (keyword))]
              (if (or (= section :interactions) (:is-logged permissions))
                (st/emit! (dv/go-to-section section))
-               (open-login-dialog)))))
+               (redirect-to-login)))))
 
         toggle-thumbnails
         (mf/use-fn
@@ -330,7 +322,7 @@
                 :class (stl/css-case :mode-zone-btn true
                                      :selected (= section :interactions))
                 :title (tr "viewer.header.interactions-section" (sc/get-tooltip :open-interactions))}
-       i/play]
+       deprecated-icon/play]
 
       (when (or (:in-team permissions)
                 (= (:who-comment permissions) "all"))
@@ -339,16 +331,9 @@
                   :class (stl/css-case :mode-zone-btn true
                                        :selected (= section :comments))
                   :title (tr "viewer.header.comments-section" (sc/get-tooltip :open-comments))}
-         i/comments])
+         deprecated-icon/comments])
 
-      (when (or (:in-team permissions)
-                (and (= (:type permissions) :share-link)
-                     (= (:who-inspect permissions) "all")))
-        [:button {:on-click go-to-inspect
-                  :class (stl/css-case :mode-zone-btn true
-                                       :selected (= section :inspect))
-                  :title (tr "viewer.header.inspect-section" (sc/get-tooltip :open-inspect))}
-         i/code])]
+      nil]
 
      [:& header-options {:section section
                          :permissions permissions

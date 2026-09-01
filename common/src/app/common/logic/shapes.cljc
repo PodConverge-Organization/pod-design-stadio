@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.logic.shapes
   (:require
@@ -17,12 +17,13 @@
    [app.common.types.pages-list :as ctpl]
    [app.common.types.shape.interactions :as ctsi]
    [app.common.types.shape.layout :as ctl]
+   [app.common.types.shape.token :as ctst]
    [app.common.types.text :as ctt]
    [app.common.types.token :as cto]
    [app.common.uuid :as uuid]
    [clojure.set :as set]))
 
-(def text-typography-attrs (set ctt/text-typography-attrs))
+(def text-typography-style-attrs (set ctt/text-typography-attrs))
 
 (defn- generate-unapply-tokens
   "When updating attributes that have a token applied, we must unapply it, because the value
@@ -38,10 +39,14 @@
           (let [new-shape (get new-objects (:id shape))
                 attrs     (ctt/get-diff-attrs (:content shape) (:content new-shape))
 
-                ;; Unapply token when applying typography asset style
-                attrs     (if (seq (set/intersection text-typography-attrs attrs))
-                            (into attrs cto/typography-keys)
-                            attrs)]
+                attrs     (cond-> attrs
+                            ;; Unapply token when applying typography asset style
+                            (seq (set/intersection text-typography-style-attrs attrs))
+                            (into cto/typography-keys)
+
+                            ;; Unapply font-weight when changing the font-family attribute
+                            (and (:font-id attrs) (ctst/font-weight-applied? shape))
+                            (conj :font-weight))]
             (apply set/union (map cto/shape-attr->token-attrs attrs))))
 
         check-attr
@@ -53,7 +58,7 @@
                               (cto/shape-attr->token-attrs attr changed-sub-attr))]
 
             (if (some #(contains? tokens %) token-attrs)
-              (pcb/update-shapes changes [shape-id] #(cto/unapply-token-id % token-attrs))
+              (pcb/update-shapes changes [shape-id] #(cto/unapply-tokens-from-shape % token-attrs))
               changes)))
 
         check-shape
@@ -70,7 +75,7 @@
     (reduce check-shape changes mod-obj-changes)))
 
 (defn generate-update-shapes
-  [changes ids update-fn objects {:keys [attrs changed-sub-attr ignore-tree ignore-touched with-objects?]}]
+  [changes ids update-fn objects {:keys [attrs changed-sub-attr ignore-tree ignore-touched with-objects? translation?]}]
   (let [changes   (reduce
                    (fn [changes id]
                      (let [opts {:attrs attrs
@@ -78,16 +83,20 @@
                                  :ignore-touched ignore-touched
                                  :with-objects? with-objects?}]
                        (pcb/update-shapes changes [id] update-fn (d/without-nils opts))))
-                   (-> changes
-                       (pcb/with-objects objects))
+                   (cond-> changes
+                     (some? objects) (pcb/with-objects objects))
                    ids)
-        grid-ids (->> ids (filter (partial ctl/grid-layout? objects)))
-        changes (-> changes
-                    (pcb/update-shapes grid-ids ctl/assign-cell-positions {:with-objects? true})
-                    (pcb/reorder-grid-children ids)
-                    (cond->
-                     (not ignore-touched)
-                      (generate-unapply-tokens objects changed-sub-attr)))]
+        ;; Translation doesn't shift children between grid cells, so
+        ;; cell reassignment + child reorder are no-ops.
+        grid-ids (when-not translation?
+                   (->> ids (filter (partial ctl/grid-layout? objects))))
+        changes (cond-> changes
+                  (seq grid-ids)
+                  (-> (pcb/update-shapes grid-ids ctl/assign-cell-positions {:with-objects? true})
+                      (pcb/reorder-grid-children ids))
+
+                  (not ignore-touched)
+                  (generate-unapply-tokens objects changed-sub-attr))]
     changes))
 
 (defn- generate-update-shape-flags
@@ -118,8 +127,12 @@
                         ;; ignore-children-fn is used to ignore some descendants
                         ;; on the deletion process. It should receive a shape and
                         ;; return a boolean
-                        ignore-children-fn]
-                 :or {ignore-children-fn (constantly false)}}]
+                        ignore-children-fn
+                        ignore-mask
+                        ignore-flows-for]
+                 :or {ignore-children-fn (constantly false)
+                      ignore-mask false
+                      ignore-flows-for #{}}}]
    (let [objects (pcb/get-objects changes)
          data    (pcb/get-library-data changes)
          page-id (pcb/get-page-id changes)
@@ -129,12 +142,12 @@
          ids     (cfh/clean-loops objects ids)
          in-component-copy?
          (fn [shape-id]
-          ;; Look for shapes that are inside a component copy, but are
-          ;; not the root. In this case, they must not be deleted,
-          ;; but hidden (to be able to recover them more easily).
-          ;; If we want to specifically allow altering the copies, this is
-          ;; a special case, like a component swap, in which case we want
-          ;; to delete the old shape
+           ;; Look for shapes that are inside a component copy, but are
+           ;; not the root. In this case, they must not be deleted,
+           ;; but hidden (to be able to recover them more easily).
+           ;; If we want to specifically allow altering the copies, this is
+           ;; a special case, like a component swap, in which case we want
+           ;; to delete the old shape
            (let [shape           (get objects shape-id)]
              (and (ctn/has-any-copy-parent? objects shape)
                   (not allow-altering-copies))))
@@ -157,43 +170,48 @@
          lookup  (d/getf objects)
 
          groups-to-unmask
-         (reduce (fn [group-ids id]
-                  ;; When the shape to delete is the mask of a masked group,
-                  ;; the mask condition must be removed, and it must be
-                  ;; converted to a normal group.
-                   (let [obj    (lookup id)
-                         parent (lookup (:parent-id obj))]
-                     (if (and (:masked-group parent)
-                              (= id (first (:shapes parent))))
-                       (conj group-ids (:id parent))
-                       group-ids)))
-                 #{}
-                 ids-to-delete)
+         (when-not ignore-mask
+           (reduce (fn [group-ids id]
+                     ;; When the shape to delete is the mask of a masked group,
+                     ;; the mask condition must be removed, and it must be
+                     ;; converted to a normal group.
+                     (let [obj    (lookup id)
+                           parent (lookup (:parent-id obj))]
+                       (if (and (:masked-group parent)
+                                (= id (first (:shapes parent))))
+                         (conj group-ids (:id parent))
+                         group-ids)))
+                   #{}
+                   ids-to-delete)
+           [])
 
          interacting-shapes
          (filter (fn [shape]
-                  ;; If any of the deleted shapes is the destination of
-                  ;; some interaction, this must be deleted, too.
+                   ;; If any of the deleted shapes is the destination of
+                   ;; some interaction, this must be deleted, too.
                    (let [interactions (:interactions shape)]
                      (some #(and (ctsi/has-destination %)
                                  (contains? ids-to-delete (:destination %)))
                            interactions)))
                  (vals objects))
 
+         id-to-delete? (set ids-to-delete)
          changes
-         (reduce (fn [changes {:keys [id] :as flow}]
-                   (if (contains? ids-to-delete (:starting-frame flow))
-                     (-> changes
-                         (pcb/with-page page)
-                         (pcb/set-flow id nil))
-                     changes))
-                 changes
-                 (:flows page))
+         (->> (:flows page)
+              (reduce
+               (fn [changes [id flow]]
+                 (if (and (id-to-delete? (:starting-frame flow))
+                          (not (contains? ignore-flows-for (:starting-frame flow))))
+                   (-> changes
+                       (pcb/with-page page)
+                       (pcb/set-flow id nil))
+                   changes))
+               changes))
 
 
          all-parents
          (reduce (fn [res id]
-                  ;; All parents of any deleted shape must be resized.
+                   ;; All parents of any deleted shape must be resized.
                    (into res (cfh/get-parent-ids objects id)))
                  (d/ordered-set)
                  (concat ids-to-delete ids-to-hide))
@@ -225,10 +243,10 @@
                (recursive-find-empty-parents parents))))
 
          empty-parents
-        ;; Any parent whose children are all deleted, must be deleted too.
-        ;; If we want to specifically allow altering the copies, this is a special case,
-        ;; for example during a component swap. in this case we are replacing a shape by
-        ;; other one, so must not delete empty parents.
+         ;; Any parent whose children are all deleted, must be deleted too.
+         ;; If we want to specifically allow altering the copies, this is a special case,
+         ;; for example during a component swap. in this case we are replacing a shape by
+         ;; other one, so must not delete empty parents.
          (if-not allow-altering-copies
            (into (d/ordered-set) (find-all-empty-parents #{}))
            #{})
@@ -260,8 +278,8 @@
                          guides-to-delete)
 
          changes (reduce (fn [changes component-id]
-                          ;; It's important to delete the component before the main instance, because we
-                          ;; need to store the instance position if we want to restore it later.
+                           ;; It's important to delete the component before the main instance, because we
+                           ;; need to store the instance position if we want to restore it later.
                            (pcb/delete-component changes component-id (:id page)))
                          changes
                          components-to-delete)
@@ -313,7 +331,7 @@
                result #{}]
 
           (if-not current-id
-                   ;; Base case, no next element
+            ;; Base case, no next element
             result
 
             (let [group (get objects current-id)]
@@ -321,14 +339,14 @@
                        (not= current-id parent-id)
                        (empty? (remove removed-id? (:shapes group))))
 
-                       ;; Adds group to the remove and check its parent
+                ;; Adds group to the remove and check its parent
                 (let [to-check (concat to-check [(cfh/get-parent-id objects current-id)])]
                   (recur (first to-check)
                          (rest to-check)
                          (conj removed-id? current-id)
                          (conj result current-id)))
 
-                       ;; otherwise recur
+                ;; otherwise recur
                 (recur (first to-check)
                        (rest to-check)
                        removed-id?
@@ -400,9 +418,10 @@
                             (remove #(= % parent-id) all-parents))]
 
     (-> changes
-        ;; Remove layout-item properties when moving a shape outside a layout
+        ;; Remove layout-item properties and tokens when moving a shape outside a layout
         (cond-> (not (ctl/any-layout? parent))
-          (pcb/update-shapes ids ctl/remove-layout-item-data))
+          (-> (pcb/update-shapes ids ctl/remove-layout-item-data)
+              (pcb/update-shapes ids cto/unapply-layout-item-tokens)))
 
         ;; Remove the hide in viewer flag
         (cond-> (and (not= uuid/zero parent-id) (cfh/frame-shape? parent))
@@ -520,5 +539,12 @@
   (update shape :interactions ctsi/add-interaction interaction))
 
 (defn show-in-viewer
+  "Auto-unhide the shape in viewer when it becomes an interaction
+   destination, but only when the user has not explicitly hidden it.
+   Preserves explicit `:hide-in-viewer true` so that adding or updating
+   an interaction whose destination has been deliberately hidden does not
+   silently flip the viewer-visibility flag the user set. See #9049."
   [shape]
-  (dissoc shape :hide-in-viewer))
+  (if (true? (:hide-in-viewer shape))
+    shape
+    (dissoc shape :hide-in-viewer)))

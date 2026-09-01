@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.workspace.colorpicker.gradients
   (:require-macros [app.main.style :as stl])
@@ -12,12 +12,12 @@
    [app.common.math :as mth]
    [app.common.types.color :as cc]
    [app.common.types.fills :as types.fills]
-   [app.config :as cfg]
    [app.main.features :as features]
    [app.main.ui.components.numeric-input :refer [numeric-input*]]
    [app.main.ui.components.reorder-handler :refer [reorder-handler*]]
    [app.main.ui.components.select :refer [select]]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
+   [app.main.ui.ds.foundations.assets.icon :as i]
    [app.main.ui.formats :as fmt]
    [app.main.ui.hooks :as h]
    [app.main.ui.workspace.sidebar.options.rows.color-row :refer [color-row*]]
@@ -50,6 +50,10 @@
        (map format-rgb)
        (str/join ", ")
        (str/ffmt "linear-gradient(90deg, %1)")))
+
+(defn- stop->hex-color
+  [stop]
+  (select-keys stop [:color :opacity]))
 
 (mf/defc stop-input-row*
   {::mf/private true}
@@ -155,8 +159,9 @@
      [:> color-row*
       {:disable-gradient true
        :disable-picker true
-       :color stop
+       :color (stop->hex-color stop)
        :index index
+       :origin :gradient
        :on-change handle-change-stop-color
        :on-remove handle-remove-stop
        :on-focus handle-focus-stop-color
@@ -228,6 +233,7 @@
          (mf/deps on-add-stop-preview)
          (fn [^js e]
            (let [offset (-> (event->offset e)
+                            (mth/clamp 0 1)
                             (mth/precision 2))]
              (when on-add-stop-preview
                (on-add-stop-preview offset)))))
@@ -287,8 +293,12 @@
          (fn []
            (when on-reverse-stops
              (on-reverse-stops))))
-        cap-stops? (or (features/use-feature "render-wasm/v1") (contains? cfg/flags :frontend-binary-fills))
-        add-stop-disabled? (when cap-stops? (>= (count stops) types.fills/MAX-GRADIENT-STOPS))]
+
+        cap-stops?
+        (features/use-feature "render-wasm/v1")
+
+        add-stop-disabled?
+        (when cap-stops? (>= (count stops) types.fills/MAX-GRADIENT-STOPS))]
 
     [:div {:class (stl/css :gradient-panel)}
      [:div {:class (stl/css :gradient-preview)}
@@ -338,19 +348,19 @@
                          :aria-label "Rotate gradient"
                          :on-click handle-rotate-gradient
                          :icon-class (stl/css :rotate-icon)
-                         :icon "reload"}]
+                         :icon i/reload}]
        [:> icon-button* {:variant "ghost"
                          :aria-label "Reverse gradient"
                          :on-click handle-reverse-gradient
-                         :icon "switch"}]
+                         :icon i/switch}]
        [:> icon-button* {:variant "ghost"
                          :aria-label "Add stop"
                          :disabled add-stop-disabled?
                          :on-click handle-add-stop
-                         :icon "add"}]]]
+                         :icon i/add}]]]
 
      [:div {:class (stl/css :gradient-stops-list)}
-      [:& h/sortable-container {}
+      [:> h/sortable-container* {}
        (for [[index stop] (d/enumerate stops)]
          [:> stop-input-row*
           {:key index

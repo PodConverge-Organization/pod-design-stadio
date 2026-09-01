@@ -2,22 +2,28 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.workspace.sidebar
   (:require-macros [app.main.style :as stl])
   (:require
    [app.common.data.macros :as dm]
-   [app.main.constants :refer [sidebar-default-width sidebar-default-max-width]]
+   [app.common.types.tokens-lib :as ctob]
+   [app.config :as cf]
+   [app.main.constants :refer [left-sidebar-default-max-width
+                               left-sidebar-default-width
+                               right-sidebar-default-max-width
+                               right-sidebar-default-width]]
    [app.main.data.common :as dcm]
    [app.main.data.event :as ev]
+   [app.main.data.style-dictionary :as sd]
+   [app.main.data.tokenscript :as ts]
    [app.main.data.workspace :as dw]
-   [app.main.features :as features]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.context :as muc]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
-   [app.main.ui.ds.foundations.assets.icon :refer [icon*]]
+   [app.main.ui.ds.foundations.assets.icon :refer [icon*] :as i]
    [app.main.ui.ds.layout.tab-switcher :refer [tab-switcher*]]
    [app.main.ui.hooks :as hooks]
    [app.main.ui.hooks.resize :refer [use-resize-hook]]
@@ -35,24 +41,39 @@
    [app.main.ui.workspace.sidebar.versions :refer [versions-toolbox*]]
    [app.main.ui.workspace.tokens.sidebar :refer [tokens-sidebar-tab*]]
    [app.util.debug :as dbg]
+   [app.util.dom :as dom]
    [app.util.i18n :refer [tr]]
-   [potok.v2.core :as ptk]
    [rumext.v2 :as mf]))
 
 ;; --- Left Sidebar (Component)
 
-(defn- on-collapse-left-sidebar
-  []
-  (st/emit! (dw/toggle-layout-flag :collapse-left-sidebar)))
+(def ^:private toggle-collapse-left-sidebar
+  (partial st/emit! (dw/toggle-layout-flag :collapse-left-sidebar)))
 
 (mf/defc collapse-button*
+  {::mf/private true}
   []
   ;; NOTE: This custom button may be replace by an action button when this variant is designed
   [:button {:class (stl/css :collapse-sidebar-button)
-            :on-click on-collapse-left-sidebar}
-   [:> icon* {:icon-id "arrow"
+            :on-click toggle-collapse-left-sidebar}
+   [:> icon* {:icon-id i/arrow
               :size "s"
               :aria-label (tr "workspace.sidebar.collapse")}]])
+
+(mf/defc collapsed-button*
+  {::mf/memo true
+   ::mf/private true}
+  []
+  [:div {:id "left-sidebar-aside"
+         :data-width "0"
+         :class (stl/css :collapsed-sidebar)}
+   [:div {:class (stl/css :collapsed-title)}
+    [:button {:class (stl/css :collapsed-button)
+              :title (tr "workspace.sidebar.expand")
+              :on-click toggle-collapse-left-sidebar}
+     [:> icon* {:icon-id i/arrow
+                :size "s"
+                :aria-label (tr "workspace.sidebar.expand")}]]]])
 
 (mf/defc layers-content*
   {::mf/private true
@@ -94,14 +115,14 @@
 
      [:> layers-toolbox* {:size-parent width}]]))
 
+
 (mf/defc left-sidebar*
   {::mf/memo true}
-  [{:keys [layout file page-id] :as props}]
+  [{:keys [layout file tokens-lib active-tokens resolved-active-tokens]}]
   (let [options-mode   (mf/deref refs/options-mode-global)
         project        (mf/deref refs/project)
         file-id        (get file :id)
 
-        design-tokens? (features/use-feature "design-tokens/v1")
         mode-inspect?  (= options-mode :inspect)
         shortcuts?     (contains? layout :shortcuts)
         show-debug?    (contains? layout :debug-panel)
@@ -116,40 +137,26 @@
          on-pointer-move :on-pointer-move
          parent-ref :parent-ref
          width :size}
-        (use-resize-hook :left-sidebar 318 318 500 :x false :left)
+        (use-resize-hook :left-sidebar left-sidebar-default-width left-sidebar-default-width left-sidebar-default-max-width :x false :left)
 
         on-tab-change
         (mf/use-fn
          (fn [id]
            (st/emit! (dcm/go-to-workspace :layout (keyword id)))
            (when (= id "tokens")
-             (st/emit! (ptk/event ::ev/event {::ev/name "open-tokens-tab"})))))
+             (st/emit! (ev/event {::ev/name "open-tokens-tab"})))))
 
         tabs
-        (mf/with-memo [mode-inspect? design-tokens?]
-          (if ^boolean mode-inspect?
-            [{:label (tr "workspace.sidebar.layers")
-              :id "layers"}]
-            (if ^boolean design-tokens?
-              [{:label (tr "workspace.sidebar.layers")
-                :id "layers"}
-;;                {:label (tr "workspace.toolbar.assets")
-;;                 :id "assets"}
-;;                {:label "Tokens"
-;;                 :id "tokens"}
-                ]
-              [{:label (tr "workspace.sidebar.layers")
-                :id "layers"}
-;;                {:label (tr "workspace.toolbar.assets")
-;;                 :id "assets"}
-                ])))
+        (mf/with-memo []
+          [{:label (tr "workspace.sidebar.layers")
+            :id "layers"}])
 
         aside-class
         (stl/css-case
          :left-settings-bar true
          :global/two-row    (<= width 300)
          :global/three-row  (and (> width 300) (<= width 400))
-         :global/four-row  (> width 400))
+         :global/four-row   (> width 400))
 
         tabs-action-button
         (mf/with-memo []
@@ -159,16 +166,15 @@
      [:aside {:ref parent-ref
               :id "left-sidebar-aside"
               :data-testid "left-sidebar"
-              :data-size (str width)
+              :data-width (str width)
               :class aside-class
-              :style {:--width (dm/str width "px")}}
+              :on-context-menu dom/prevent-default-context-menu
+              :style {:--left-sidebar-width (dm/str width "px")}}
 
-      [:> left-header*
-       {:file file
-        :layout layout
-        :project project
-        :page-id page-id
-        :class (stl/css :left-header)}]
+      [:> left-header* {:file file
+                        :layout layout
+                        :project project
+                        :class (stl/css :left-header)}]
 
       [:div {:on-pointer-down on-pointer-down
              :on-lost-pointer-capture on-lost-pointer-capture
@@ -199,7 +205,10 @@
               :file-id file-id}]
 
             :tokens
-            [:> tokens-sidebar-tab*]
+            [:> tokens-sidebar-tab*
+             {:tokens-lib tokens-lib
+              :active-tokens active-tokens
+              :resolved-active-tokens resolved-active-tokens}]
 
             :layers
             [:> layers-content*
@@ -238,7 +247,7 @@
            [:> icon-button* {:variant "ghost"
                              :aria-label (tr "labels.close")
                              :on-click on-close-document-history
-                             :icon "close"}]))]
+                             :icon i/close}]))]
 
     [:> tab-switcher* {:tabs tabs
                        :selected selected
@@ -257,8 +266,7 @@
         [:> history-toolbox*]])]))
 
 (mf/defc right-sidebar*
-  {::mf/memo true}
-  [{:keys [layout section file page-id drawing-tool] :as props}]
+  [{:keys [layout section file-id page-id drawing-tool active-tokens] :as props}]
   (let [is-comments?     (= drawing-tool :comments)
         is-history?      (contains? layout :document-history)
         is-inspect?      (= section :inspect)
@@ -280,7 +288,7 @@
          on-pointer-move :on-pointer-move
          set-width :set-size
          width :size}
-        (use-resize-hook :code sidebar-default-width sidebar-default-width sidebar-default-max-width :x true :right)
+        (use-resize-hook :code right-sidebar-default-width right-sidebar-default-width right-sidebar-default-max-width :x true :right)
 
         on-change-section
         (mf/use-fn #(reset! current-section* %))
@@ -289,47 +297,112 @@
         (mf/use-fn
          (mf/deps width set-width)
          (fn []
-           (set-width (if (> width sidebar-default-width)
-                        sidebar-default-width
-                        sidebar-default-max-width))))]
+           (set-width (if (> width right-sidebar-default-width)
+                        right-sidebar-default-width
+                        right-sidebar-default-max-width))))
+
+        active-tokens-by-type
+        (mf/with-memo [active-tokens]
+          (delay (ctob/group-by-type active-tokens)))]
 
     [:> (mf/provider muc/sidebar) {:value :right}
-     [:aside
-      {:class (stl/css-case :right-settings-bar true
-                            :not-expand (not can-be-expanded?)
-                            :expanded (> width sidebar-default-width))
+     [:> (mf/provider muc/active-tokens-by-type) {:value active-tokens-by-type}
+      [:aside
+       {:class (stl/css-case :right-settings-bar true
+                             :not-expand (not can-be-expanded?)
+                             :expanded (> width right-sidebar-default-width))
 
-       :id "right-sidebar-aside"
-       :data-testid "right-sidebar"
-       :data-size (str width)
-       :style {:--width (if can-be-expanded?
-                          (dm/str width "px")
-                          (dm/str sidebar-default-width "px"))}}
+        :id "right-sidebar-aside"
+        :data-testid "right-sidebar"
+        :data-size (str width)
+        :on-context-menu dom/prevent-default-context-menu
+        :style {:--right-sidebar-width (if can-be-expanded?
+                                         (dm/str width "px")
+                                         (dm/str right-sidebar-default-width "px"))}}
 
-      (when can-be-expanded?
-        [:div {:class (stl/css :resize-area)
-               :on-pointer-down on-pointer-down
-               :on-lost-pointer-capture on-lost-pointer-capture
-               :on-pointer-move on-pointer-move}])
+       (when can-be-expanded?
+         [:div {:class (stl/css :resize-area)
+                :on-pointer-down on-pointer-down
+                :on-lost-pointer-capture on-lost-pointer-capture
+                :on-pointer-move on-pointer-move}])
 
-      [:> right-header*
-       {:file file
-        :layout layout
-        :page-id page-id}]
+       [:> right-header*
+        {:file-id file-id
+         :layout layout
+         :page-id page-id}]
 
-      [:div {:class (stl/css :settings-bar-inside)}
-       (cond
-         dbg-shape-panel?
-         [:> debug-shape-info*]
+       [:div {:class (stl/css :settings-bar-inside)}
+        (cond
+          dbg-shape-panel?
+          [:> debug-shape-info*]
 
-         is-comments?
-         [:> comments-sidebar* {}]
+          is-comments?
+          [:> comments-sidebar* {}]
 
-         is-history?
-         [:> history-content* {}]
+          is-history?
+          [:> history-content* {}]
 
-         :else
-         (let [props (mf/spread-props props
-                                      {:on-change-section on-change-section
-                                       :on-expand on-expand})]
-           [:> options-toolbox* props]))]]]))
+          :else
+          (let [props (mf/spread-props props
+                                       {:on-change-section on-change-section
+                                        :on-expand on-expand})]
+            [:> options-toolbox* props]))]]]]))
+
+(mf/defc sidebar*
+  [{:keys [layout file file-id page-id section drawing-tool selected]}]
+  (let [tokens-lib
+        (mf/deref refs/tokens-lib)
+
+        active-tokens
+        (mf/with-memo [tokens-lib]
+          (if tokens-lib
+            (ctob/get-tokens-in-active-sets tokens-lib)
+            {}))
+
+        selected-token-set-id
+        (mf/deref refs/selected-token-set-id)
+
+        active-tokens-force-set
+        (mf/with-memo [tokens-lib selected-token-set-id]
+          (if (and tokens-lib selected-token-set-id)
+            (ctob/get-tokens-in-active-sets-force tokens-lib selected-token-set-id)
+            {}))
+
+        tokenscript? (contains? cf/flags :tokenscript)
+
+        resolved-active-tokens
+        (sd/use-resolved-tokens* active-tokens)
+
+        tokenscript-resolved-active-tokens
+        (mf/with-memo [active-tokens tokenscript?]
+          (when tokenscript? (ts/resolve-tokens active-tokens)))
+
+        tokenscript-resolved-active-tokens-force-set
+        (mf/with-memo [active-tokens-force-set tokenscript?]
+          (when tokenscript? (ts/resolve-tokens active-tokens-force-set)))
+
+        resolved-active-tokens-force-set
+        (sd/use-resolved-tokens* active-tokens-force-set)]
+
+    [:*
+     (if (:collapse-left-sidebar layout)
+       [:> collapsed-button*]
+       [:> left-sidebar* {:layout layout
+                          :file file
+                          :page-id page-id
+                          :tokens-lib tokens-lib
+                          :active-tokens active-tokens-force-set
+                          :resolved-active-tokens (if tokenscript?
+                                                    tokenscript-resolved-active-tokens-force-set
+                                                    resolved-active-tokens-force-set)}])
+     [:> right-sidebar* {:section section
+                         :selected selected
+                         :drawing-tool drawing-tool
+                         :layout layout
+                         :file file
+                         :file-id file-id
+                         :page-id page-id
+                         :tokens-lib tokens-lib
+                         :active-tokens (if tokenscript?
+                                          tokenscript-resolved-active-tokens
+                                          resolved-active-tokens)}]]))

@@ -1,12 +1,14 @@
 use skia_safe::{self as skia};
 
-use crate::render::BlendMode;
+use indexmap::IndexSet;
+
 use crate::uuid::Uuid;
 use std::borrow::Cow;
-use std::cell::OnceCell;
-use std::collections::{HashMap, HashSet};
+use std::cell::{OnceCell, RefCell};
+use std::collections::HashSet;
 use std::iter::once;
 
+mod blend;
 mod blurs;
 mod bools;
 mod corners;
@@ -20,13 +22,16 @@ mod paths;
 mod rects;
 mod shadows;
 mod shape_to_path;
+mod stroke_paths;
 mod strokes;
+mod svg_attrs;
 mod svgraw;
 mod text;
 pub mod text_paths;
 mod transform;
 
-pub use blurs::*;
+pub use blend::*;
+pub use blurs::{radius_to_sigma, Blur, BlurType};
 pub use bools::*;
 pub use corners::*;
 pub use fills::*;
@@ -39,19 +44,18 @@ pub use paths::*;
 pub use rects::*;
 pub use shadows::*;
 pub use shape_to_path::*;
+pub use stroke_paths::*;
 pub use strokes::*;
+pub use svg_attrs::*;
 pub use svgraw::*;
 pub use text::*;
 pub use transform::*;
 
-use crate::math;
-use crate::math::{Bounds, Matrix, Point};
-use indexmap::IndexSet;
+use crate::math::{self, Bounds, Matrix, Point};
 
-use crate::state::ShapesPool;
+use crate::state::ShapesPoolRef;
 
 const MIN_VISIBLE_SIZE: f32 = 2.0;
-const ANTIALIAS_THRESHOLD: f32 = 15.0;
 const MIN_STROKE_WIDTH: f32 = 0.001;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,26 +65,12 @@ pub enum Type {
     Bool(Bool),
     Rect(Rect),
     Path(Path),
-    Circle,
-    SVGRaw(SVGRaw),
     Text(TextContent),
+    Circle, // FIXME: shouldn't this have a rect inside, like the Rect variant?
+    SVGRaw(SVGRaw),
 }
 
 impl Type {
-    pub fn from(value: u8) -> Self {
-        match value {
-            0 => Type::Frame(Frame::default()),
-            1 => Type::Group(Group::default()),
-            2 => Type::Bool(Bool::default()),
-            3 => Type::Rect(Rect::default()),
-            4 => Type::Path(Path::default()),
-            5 => Type::Text(TextContent::default()),
-            6 => Type::Circle,
-            7 => Type::SVGRaw(SVGRaw::default()),
-            _ => Type::Rect(Rect::default()),
-        }
-    }
-
     pub fn corners(&self) -> Option<Corners> {
         match self {
             Type::Rect(Rect { corners, .. }) => *corners,
@@ -96,6 +86,18 @@ impl Type {
             }
             Type::Frame(data) => {
                 data.corners = Some(corners);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn clear_corners(&mut self) {
+        match self {
+            Type::Rect(data) => {
+                data.corners = None;
+            }
+            Type::Frame(data) => {
+                data.corners = None;
             }
             _ => {}
         }
@@ -150,35 +152,12 @@ pub enum ConstraintH {
     Scale,
 }
 
-impl ConstraintH {
-    pub fn from(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(Self::Left),
-            1 => Some(Self::Right),
-            2 => Some(Self::LeftRight),
-            3 => Some(Self::Center),
-            4 => Some(Self::Scale),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Copy)]
+#[repr(u8)]
 pub enum VerticalAlign {
-    Top,
-    Center,
-    Bottom,
-}
-
-impl VerticalAlign {
-    pub fn from(value: u8) -> Self {
-        match value {
-            0 => Self::Top,
-            1 => Self::Center,
-            2 => Self::Bottom,
-            _ => Self::Top,
-        }
-    }
+    Top = 0,
+    Center = 1,
+    Bottom = 2,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -190,19 +169,6 @@ pub enum ConstraintV {
     Scale,
 }
 
-impl ConstraintV {
-    pub fn from(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(Self::Top),
-            1 => Some(Self::Bottom),
-            2 => Some(Self::TopBottom),
-            3 => Some(Self::Center),
-            4 => Some(Self::Scale),
-            _ => None,
-        }
-    }
-}
-
 pub type Color = skia::Color;
 
 #[derive(Debug, Clone)]
@@ -210,7 +176,7 @@ pub struct Shape {
     pub id: Uuid,
     pub parent_id: Option<Uuid>,
     pub shape_type: Type,
-    pub children: IndexSet<Uuid>,
+    pub children: Vec<Uuid>,
     pub selrect: math::Rect,
     pub transform: Matrix,
     pub rotation: f32,
@@ -221,23 +187,98 @@ pub struct Shape {
     pub strokes: Vec<Stroke>,
     pub blend_mode: BlendMode,
     pub vertical_align: VerticalAlign,
-    pub blur: Blur,
+    pub blur: Option<Blur>,
+    pub background_blur: Option<Blur>,
     pub opacity: f32,
     pub hidden: bool,
     pub svg: Option<skia::svg::Dom>,
-    pub svg_attrs: HashMap<String, String>,
+    pub svg_attrs: Option<SvgAttrs>,
     pub shadows: Vec<Shadow>,
     pub layout_item: Option<LayoutItem>,
-    pub extrect: OnceCell<math::Rect>,
+    pub bounds: OnceCell<math::Bounds>,
+    pub extrect_cache: RefCell<Option<math::Rect>>,
+    pub svg_transform: Option<Matrix>,
+    pub ignore_constraints: bool,
+    deleted: bool,
+}
+
+// Returns all ancestor shapes of this shape, traversing up the parent hierarchy
+//
+// This function walks up the parent chain starting from this shape's parent,
+// collecting all ancestor IDs. It stops when it reaches a nil UUID or when
+// an ancestor is hidden (unless include_hidden is true).
+//
+// # Arguments
+// * `shapes` - The shapes pool containing all shapes
+// * `include_hidden` - Whether to include hidden ancestors in the result
+//
+// # Returns
+// A set of ancestor UUIDs in traversal order (closest ancestor first)
+pub fn all_with_ancestors(
+    shapes: &[Uuid],
+    shapes_pool: ShapesPoolRef,
+    include_hidden: bool,
+) -> Vec<Uuid> {
+    let mut pending = Vec::from_iter(shapes.iter());
+    let mut result = Vec::new();
+    let mut seen = HashSet::new();
+
+    while !pending.is_empty() {
+        let Some(current_id) = pending.pop() else {
+            break;
+        };
+
+        if !seen.insert(*current_id) {
+            continue;
+        }
+
+        result.push(*current_id);
+
+        let Some(parent_id) = shapes_pool.get(current_id).and_then(|s| s.parent_id) else {
+            continue;
+        };
+
+        if parent_id == Uuid::nil() {
+            continue;
+        }
+
+        if seen.contains(&parent_id) {
+            continue;
+        }
+
+        // Check if the ancestor is hidden
+        let Some(parent) = shapes_pool.get(&parent_id) else {
+            continue;
+        };
+
+        if !include_hidden && parent.hidden() {
+            continue;
+        }
+
+        pending.push(&parent.id);
+    }
+    result
 }
 
 impl Shape {
+    pub fn get_relative_point(
+        point: &Point,
+        view_matrix: &Matrix,
+        shape_matrix: &Matrix,
+    ) -> Option<Point> {
+        let inv_view_matrix = view_matrix.invert()?;
+        let inv_shape_matrix = shape_matrix.invert()?;
+        let transform_matrix: Matrix = Matrix::concat(&inv_shape_matrix, &inv_view_matrix);
+        let shape_relative_point = transform_matrix.map_point(*point);
+        Some(shape_relative_point)
+    }
+
     pub fn new(id: Uuid) -> Self {
         Self {
             id,
             parent_id: None,
             shape_type: Type::Rect(Rect::default()),
-            children: IndexSet::<Uuid>::new(),
+            children: Vec::new(),
             selrect: math::Rect::new_empty(),
             transform: Matrix::default(),
             rotation: 0.,
@@ -250,36 +291,46 @@ impl Shape {
             vertical_align: VerticalAlign::Top,
             opacity: 1.,
             hidden: false,
-            blur: Blur::default(),
+            blur: None,
+            background_blur: None,
             svg: None,
-            svg_attrs: HashMap::new(),
+            svg_attrs: None,
             shadows: Vec::with_capacity(1),
             layout_item: None,
-            extrect: OnceCell::new(),
+            bounds: OnceCell::new(),
+            extrect_cache: RefCell::new(None),
+            svg_transform: None,
+            ignore_constraints: false,
+            deleted: false,
         }
     }
 
-    pub fn scale_content(&self, value: f32) -> Self {
-        let mut result = self.clone();
-        result.shape_type.scale_content(value);
-        result
-            .strokes
-            .iter_mut()
-            .for_each(|s| s.scale_content(value));
-        result
-            .shadows
-            .iter_mut()
-            .for_each(|s| s.scale_content(value));
-        result.blur.scale_content(value);
-        result
-            .layout_item
+    pub fn scale_content(&mut self, value: f32) {
+        self.ignore_constraints = true;
+        self.shape_type.scale_content(value);
+        self.strokes.iter_mut().for_each(|s| s.scale_content(value));
+
+        self.shadows.iter_mut().for_each(|s| s.scale_content(value));
+
+        if let Some(blur) = self.blur.as_mut() {
+            blur.scale_content(value);
+        }
+
+        if let Some(background_blur) = self.background_blur.as_mut() {
+            background_blur.scale_content(value);
+        }
+
+        self.layout_item
             .iter_mut()
             .for_each(|i| i.scale_content(value));
-        result
+    }
+
+    pub fn invalidate_bounds(&mut self) {
+        self.bounds = OnceCell::new();
     }
 
     pub fn invalidate_extrect(&mut self) {
-        self.extrect = OnceCell::new();
+        *self.extrect_cache.borrow_mut() = None;
     }
 
     pub fn set_parent(&mut self, id: Uuid) {
@@ -293,6 +344,10 @@ impl Shape {
     #[allow(dead_code)]
     pub fn is_frame(&self) -> bool {
         matches!(self.shape_type, Type::Frame(_))
+    }
+
+    pub fn is_bool(&self) -> bool {
+        matches!(self.shape_type, Type::Bool(_))
     }
 
     pub fn is_group_like(&self) -> bool {
@@ -309,11 +364,41 @@ impl Shape {
         )
     }
 
+    #[allow(dead_code)]
+    pub fn is_flex(&self) -> bool {
+        matches!(
+            self.shape_type,
+            Type::Frame(Frame {
+                layout: Some(layouts::Layout::FlexLayout(_, _)),
+                ..
+            })
+        )
+    }
+
+    pub fn is_flex_reverse(&self) -> bool {
+        matches!(
+            self.shape_type,
+            Type::Frame(Frame {
+                layout: Some(layouts::Layout::FlexLayout(
+                    _,
+                    FlexData {
+                        direction: layouts::FlexDirection::RowReverse
+                            | layouts::FlexDirection::ColumnReverse,
+                        ..
+                    }
+                )),
+                ..
+            })
+        )
+    }
+
     pub fn set_selrect(&mut self, left: f32, top: f32, right: f32, bottom: f32) {
+        self.invalidate_bounds();
         self.invalidate_extrect();
         self.selrect.set_ltrb(left, top, right, bottom);
         if let Type::Text(ref mut text) = self.shape_type {
-            text.set_xywh(left, top, right - left, bottom - top);
+            text.update_layout(self.selrect);
+            text.set_xywh(left, top, self.selrect.width(), self.selrect.height());
         }
     }
 
@@ -329,10 +414,12 @@ impl Shape {
 
     pub fn set_rotation(&mut self, angle: f32) {
         self.rotation = angle;
+        self.invalidate_extrect();
     }
 
     pub fn set_transform(&mut self, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) {
         self.transform = Matrix::new_all(a, c, e, b, d, f, 0.0, 0.0, 1.0);
+        self.invalidate_extrect();
     }
 
     pub fn set_opacity(&mut self, opacity: f32) {
@@ -345,6 +432,11 @@ impl Shape {
 
     pub fn vertical_align(&self) -> VerticalAlign {
         self.vertical_align
+    }
+
+    pub fn clear_constraints(&mut self) {
+        self.constraint_h = None;
+        self.constraint_v = None;
     }
 
     pub fn set_constraint_h(&mut self, constraint: Option<ConstraintH>) {
@@ -367,6 +459,18 @@ impl Shape {
         self.hidden = value;
     }
 
+    pub fn svg_transform(&self) -> Option<Matrix> {
+        self.svg_transform
+    }
+
+    pub fn set_deleted(&mut self, value: bool) {
+        self.deleted = value;
+    }
+
+    pub fn deleted(&self) -> bool {
+        self.deleted
+    }
+
     // FIXME: These arguments could be grouped or simplified
     #[allow(clippy::too_many_arguments)]
     pub fn set_flex_layout_child_data(
@@ -383,7 +487,7 @@ impl Shape {
         min_w: Option<f32>,
         align_self: Option<AlignSelf>,
         is_absolute: bool,
-        z_index: i32,
+        z_index: Option<i32>,
     ) {
         self.layout_item = Some(LayoutItem {
             margin_top,
@@ -400,6 +504,13 @@ impl Shape {
             z_index,
             align_self,
         });
+    }
+
+    pub fn clear_layout(&mut self) {
+        self.layout_item = None;
+        if let Type::Frame(data) = &mut self.shape_type {
+            data.layout = None;
+        }
     }
 
     // FIXME: These arguments could be grouped or simplified
@@ -491,55 +602,65 @@ impl Shape {
         }
     }
 
-    pub fn set_grid_columns(&mut self, tracks: Vec<RawGridTrack>) {
+    pub fn set_grid_columns(&mut self, tracks: Vec<GridTrack>) {
         let Type::Frame(frame_data) = &mut self.shape_type else {
             return;
         };
         let Some(Layout::GridLayout(_, grid_data)) = &mut frame_data.layout else {
             return;
         };
-        grid_data.columns = tracks.iter().map(GridTrack::from_raw).collect();
+        grid_data.columns = tracks;
     }
 
-    pub fn set_grid_rows(&mut self, tracks: Vec<RawGridTrack>) {
+    pub fn set_grid_rows(&mut self, tracks: Vec<GridTrack>) {
         let Type::Frame(frame_data) = &mut self.shape_type else {
             return;
         };
         let Some(Layout::GridLayout(_, grid_data)) = &mut frame_data.layout else {
             return;
         };
-        grid_data.rows = tracks.iter().map(GridTrack::from_raw).collect();
+        grid_data.rows = tracks;
     }
 
-    pub fn set_grid_cells(&mut self, cells: Vec<RawGridCell>) {
+    pub fn set_grid_cells(&mut self, cells: Vec<GridCell>) {
         let Type::Frame(frame_data) = &mut self.shape_type else {
             return;
         };
         let Some(Layout::GridLayout(_, grid_data)) = &mut frame_data.layout else {
             return;
         };
-        grid_data.cells = cells.iter().map(GridCell::from_raw).collect();
+        grid_data.cells = cells;
     }
 
-    pub fn set_blur(&mut self, blur_type: u8, hidden: bool, value: f32) {
+    pub fn set_blur(&mut self, blur: Option<Blur>) {
         self.invalidate_extrect();
-        self.blur = Blur::new(blur_type, hidden, value);
+        self.blur = blur;
+    }
+
+    pub fn set_background_blur(&mut self, blur: Option<Blur>) {
+        self.invalidate_extrect();
+        self.background_blur = blur;
+    }
+
+    pub fn visible_background_blur(&self) -> Option<Blur> {
+        self.background_blur.filter(|blur| !blur.hidden)
     }
 
     pub fn add_child(&mut self, id: Uuid) {
-        self.children.insert(id);
+        self.children.push(id);
     }
 
-    pub fn compute_children_differences(
-        &mut self,
-        children: &IndexSet<Uuid>,
-    ) -> (IndexSet<Uuid>, IndexSet<Uuid>) {
-        let added = children.difference(&self.children).cloned().collect();
-        let removed = self.children.difference(children).cloned().collect();
+    pub fn compute_children_differences(&mut self, children: &[Uuid]) -> (Vec<Uuid>, Vec<Uuid>) {
+        let current_set: HashSet<Uuid> = self.children.iter().copied().collect();
+        let new_set: HashSet<Uuid> = children.iter().copied().collect();
+
+        let added: Vec<Uuid> = new_set.difference(&current_set).copied().collect();
+        let removed: Vec<Uuid> = current_set.difference(&new_set).copied().collect();
         (added, removed)
     }
 
-    pub fn fills(&self) -> std::slice::Iter<Fill> {
+    #[allow(dead_code)]
+    pub fn fills(&self) -> std::slice::Iter<'_, Fill> {
         self.fills.iter()
     }
 
@@ -561,6 +682,12 @@ impl Shape {
             .filter(|stroke| stroke.width > MIN_STROKE_WIDTH)
     }
 
+    pub fn has_visible_strokes(&self) -> bool {
+        self.strokes
+            .iter()
+            .any(|stroke| stroke.width > MIN_STROKE_WIDTH)
+    }
+
     pub fn add_stroke(&mut self, s: Stroke) {
         self.invalidate_extrect();
         self.strokes.push(s)
@@ -578,34 +705,47 @@ impl Shape {
     }
 
     pub fn set_path_segments(&mut self, segments: Vec<Segment>) {
-        self.invalidate_extrect();
-        let path = Path::new(segments);
         match &mut self.shape_type {
             Type::Bool(Bool { bool_type, .. }) => {
+                let path = match bool_type {
+                    // Exclusion booleans are computed with even-odd semantics but
+                    // PathData uploads do not carry the fill rule.
+                    BoolType::Exclusion => Path::new(segments).with_even_odd(true),
+                    _ => Path::new(segments),
+                };
                 self.shape_type = Type::Bool(Bool {
                     bool_type: *bool_type,
                     path,
                 });
             }
             Type::Path(_) => {
-                self.shape_type = Type::Path(path);
+                self.shape_type = Type::Path(Path::new(segments));
             }
             _ => {}
         };
+        self.invalidate_bounds();
+        self.invalidate_extrect();
     }
 
-    pub fn set_path_attr(&mut self, name: String, value: String) {
-        match self.shape_type {
-            Type::Path(_) | Type::Bool(_) => {
-                self.set_svg_attr(name, value);
+    pub fn update_svg_raw_content(&mut self, font_manager: skia::FontMgr) {
+        match &self.shape_type {
+            Type::SVGRaw(sr) => {
+                let dom_result = skia::svg::Dom::from_str(&sr.content, font_manager);
+                match dom_result {
+                    Ok(dom) => {
+                        self.set_svg(dom);
+                    }
+                    Err(e) => {
+                        eprintln!("Error parsing SVG. Error: {}", e);
+                    }
+                }
             }
-            _ => unreachable!("This shape should have path attrs"),
-        };
+            _ => panic!("Updating SVG raw content on non SVG Raw shape"),
+        }
     }
 
-    pub fn set_svg_raw_content(&mut self, content: String) -> Result<(), String> {
+    pub fn set_svg_raw_content(&mut self, content: String) {
         self.shape_type = Type::SVGRaw(SVGRaw::from_content(content));
-        Ok(())
     }
 
     pub fn set_blend_mode(&mut self, mode: BlendMode) {
@@ -628,18 +768,18 @@ impl Shape {
     pub fn set_corners(&mut self, raw_corners: (f32, f32, f32, f32)) {
         if let Some(corners) = make_corners(raw_corners) {
             self.shape_type.set_corners(corners);
+        } else {
+            self.shape_type.clear_corners();
         }
+        self.invalidate_bounds();
+        self.invalidate_extrect();
     }
 
     pub fn set_svg(&mut self, svg: skia::svg::Dom) {
         self.svg = Some(svg);
     }
 
-    pub fn set_svg_attr(&mut self, name: String, value: String) {
-        self.svg_attrs.insert(name, value);
-    }
-
-    pub fn blend_mode(&self) -> crate::render::BlendMode {
+    pub fn blend_mode(&self) -> BlendMode {
         self.blend_mode
     }
 
@@ -656,23 +796,20 @@ impl Shape {
         self.selrect.width()
     }
 
-    pub fn visually_insignificant(
-        &self,
-        scale: f32,
-        shapes_pool: &ShapesPool,
-        modifiers: &HashMap<Uuid, Matrix>,
-    ) -> bool {
-        let extrect = self.extrect(shapes_pool, modifiers);
+    pub fn extrect(&self, shapes_pool: ShapesPoolRef, scale: f32) -> math::Rect {
+        self.calculate_extrect(shapes_pool, scale)
+    }
+
+    pub fn visually_insignificant(&self, scale: f32, shapes_pool: ShapesPoolRef) -> bool {
+        let extrect = self.extrect(shapes_pool, scale);
         extrect.width() * scale < MIN_VISIBLE_SIZE && extrect.height() * scale < MIN_VISIBLE_SIZE
     }
 
-    pub fn should_use_antialias(&self, scale: f32) -> bool {
-        self.selrect.width() * scale > ANTIALIAS_THRESHOLD
-            || self.selrect.height() * scale > ANTIALIAS_THRESHOLD
+    pub fn should_use_antialias(&self, scale: f32, threshold: f32) -> bool {
+        self.selrect.width() * scale > threshold || self.selrect.height() * scale > threshold
     }
 
-    // TODO: Maybe store this inside the shape
-    pub fn bounds(&self) -> Bounds {
+    pub fn calculate_bounds(&self, apply_transform: bool) -> Bounds {
         let mut bounds = Bounds::new(
             Point::new(self.selrect.x(), self.selrect.y()),
             Point::new(self.selrect.x() + self.selrect.width(), self.selrect.y()),
@@ -683,75 +820,69 @@ impl Shape {
             Point::new(self.selrect.x(), self.selrect.y() + self.selrect.height()),
         );
 
-        let center = self.center();
-        let mut matrix = self.transform;
-        matrix.post_translate(center);
-        matrix.pre_translate(-center);
-
-        bounds.transform_mut(&matrix);
+        // Apply this transformation only when self.transform
+        // is not the identity matrix because if it is,
+        // the result of applying this transformations would be
+        // the same identity matrix.
+        if apply_transform && !self.transform.is_identity() {
+            let mut matrix = self.transform;
+            let center = self.center();
+            matrix.post_translate(center);
+            matrix.pre_translate(-center);
+            bounds.transform_mut(&matrix);
+        }
 
         bounds
+    }
+
+    pub fn bounds(&self) -> Bounds {
+        *self.bounds.get_or_init(|| self.calculate_bounds(true))
     }
 
     pub fn selrect(&self) -> math::Rect {
         self.selrect
     }
 
-    pub fn extrect(
-        &self,
-        shapes_pool: &ShapesPool,
-        modifiers: &HashMap<Uuid, Matrix>,
-    ) -> math::Rect {
-        *self
-            .extrect
-            .get_or_init(|| self.calculate_extrect(shapes_pool, modifiers))
+    pub fn get_text_content(&self) -> &TextContent {
+        match &self.shape_type {
+            crate::shapes::Type::Text(text_content) => text_content,
+            _ => panic!("Shape is not of type Text"),
+        }
     }
 
-    pub fn calculate_extrect(
-        &self,
-        shapes_pool: &ShapesPool,
-        modifiers: &HashMap<Uuid, Matrix>,
-    ) -> math::Rect {
-        let mut max_stroke: f32 = 0.;
-        let is_open = if let Type::Path(p) = &self.shape_type {
-            p.is_open()
-        } else {
-            false
-        };
+    /// Calculates the bounding rectangle for a selrect shape's shadow, taking into account
+    /// stroke widths and shadow properties.
+    ///
+    /// This method computes the expanded bounds that would be needed to fully render
+    /// the shadow effect for a shape. It considers:
+    /// - The base bounds (selection rectangle)
+    /// - Maximum stroke width across all strokes, accounting for stroke rendering kind
+    /// - Shadow offset (x, y displacement)
+    /// - Shadow blur radius (expands bounds outward)
+    /// - Whether the shadow is hidden
+    ///
+    /// # Arguments
+    /// * `shadow` - The shadow configuration containing offset, blur, and visibility
+    ///
+    /// # Returns
+    /// A `math::Rect` representing the bounding rectangle that encompasses the shadow.
+    /// Returns an empty rectangle if the shadow is hidden.
+    pub fn get_selrect_shadow_bounds(&self, shadow: &Shadow) -> math::Rect {
+        let base_bounds = self.selrect();
+        let mut rect = skia::Rect::new_empty();
 
+        let mut max_stroke: Option<f32> = None;
         for stroke in self.strokes.iter() {
-            let width = match stroke.render_kind(is_open) {
-                StrokeKind::Inner => 0.,
-                StrokeKind::Center => stroke.width / 2.,
+            let width = match stroke.render_kind(false) {
+                StrokeKind::Inner => -stroke.width / 2.,
+                StrokeKind::Center => 0.,
                 StrokeKind::Outer => stroke.width,
             };
-            max_stroke = max_stroke.max(width);
+            max_stroke = Some(max_stroke.unwrap_or(f32::MIN).max(width));
         }
-
-        let mut rect = if let Some(path) = self.get_skia_path() {
-            path.compute_tight_bounds()
-                .with_outset((max_stroke, max_stroke))
-        } else {
-            let mut bounds_rect = self.bounds().to_rect();
-            let mut stroke_rect = bounds_rect;
-            stroke_rect.left -= max_stroke;
-            stroke_rect.right += max_stroke;
-            stroke_rect.top -= max_stroke;
-            stroke_rect.bottom += max_stroke;
-
-            bounds_rect.join(stroke_rect);
-            bounds_rect
-        };
-
-        if let Type::Text(ref text_content) = self.shape_type {
-            let (width, height) = text_content.visual_bounds();
-            rect.right = rect.left + width;
-            rect.bottom = rect.top + height;
-        }
-
-        for shadow in self.shadows.iter() {
+        if !shadow.hidden() {
             let (x, y) = shadow.offset;
-            let mut shadow_rect = rect;
+            let mut shadow_rect = base_bounds;
             shadow_rect.left += x;
             shadow_rect.right += x;
             shadow_rect.top += y;
@@ -762,89 +893,333 @@ impl Shape {
             shadow_rect.right += shadow.blur;
             shadow_rect.bottom += shadow.blur;
 
+            if let Some(max_stroke) = max_stroke {
+                shadow_rect.left -= max_stroke;
+                shadow_rect.right += max_stroke;
+                shadow_rect.top -= max_stroke;
+                shadow_rect.bottom += max_stroke;
+            }
             rect.join(shadow_rect);
         }
+        rect
+    }
 
-        if self.blur.blur_type != blurs::BlurType::None {
-            rect.left -= self.blur.value;
-            rect.top -= self.blur.value;
-            rect.right += self.blur.value;
-            rect.bottom += self.blur.value;
+    fn apply_stroke_bounds(&self, bounds: Bounds, stroke_width: f32) -> Bounds {
+        let mut result = bounds.to_rect();
+        if stroke_width > 0.0 {
+            let mut expanded_rect = bounds.to_rect();
+            expanded_rect.inset((-stroke_width, -stroke_width));
+            result.join(expanded_rect);
         }
 
-        // For frames without clipping, extend the bounding rectangle to include all nested shapes
-        // This ensures that frames properly encompass their content when clip_content is false
-        if let Type::Frame(_) = &self.shape_type {
-            if !self.clip_content {
-                for child_id in self.children_ids(false) {
-                    if let Some(child_shape) = shapes_pool.get(&child_id) {
-                        // Create a copy of the child shape to apply any transformations
-                        let mut transformed_element: Cow<Shape> = Cow::Borrowed(child_shape);
-                        if let Some(modifier) = modifiers.get(&child_id) {
-                            transformed_element.to_mut().apply_transform(modifier);
-                        }
+        let cap_margin = self.cap_bounds_margin();
+        if cap_margin > 0.0 {
+            let mut cap_rect = bounds.to_rect();
+            cap_rect.inset((-cap_margin, -cap_margin));
+            result.join(cap_rect);
+        }
 
-                        // Get the child's extended rectangle and join it with the frame's rectangle
-                        let child_extrect = transformed_element.extrect(shapes_pool, modifiers);
+        Bounds::from_rect(&result)
+    }
+
+    fn apply_cap_bounds(&self, bounds: Bounds, cap_margin: f32) -> Bounds {
+        let mut result = bounds.to_rect();
+        if cap_margin > 0.0 {
+            result.inset((-cap_margin, -cap_margin));
+        }
+        Bounds::from_rect(&result)
+    }
+
+    fn apply_shadow_bounds(&self, bounds: Bounds) -> Bounds {
+        let mut rect = bounds.to_rect();
+        for shadow in self.shadows_visible() {
+            if !shadow.hidden() {
+                if let Some(filter) = shadow.get_drop_shadow_filter() {
+                    let shadow_bounds = filter.compute_fast_bounds(rect);
+                    rect.join(shadow_bounds);
+                }
+            }
+        }
+        Bounds::from_rect(&rect)
+    }
+
+    fn apply_blur_bounds(&self, bounds: Bounds) -> Bounds {
+        let mut rect = bounds.to_rect();
+        let image_filter = self.image_filter(1.);
+        if let Some(image_filter) = image_filter {
+            let blur_bounds = image_filter.compute_fast_bounds(rect);
+            rect.join(blur_bounds);
+        }
+        Bounds::from_rect(&rect)
+    }
+
+    fn apply_children_bounds(
+        &self,
+        bounds: Bounds,
+        shapes_pool: ShapesPoolRef,
+        scale: f32,
+    ) -> Bounds {
+        let mut rect = bounds.to_rect();
+
+        match self.shape_type {
+            Type::Group(Group { masked: true }) => {
+                let mut mask_rect: Option<math::Rect> = None;
+                let mut content_rect: Option<math::Rect> = None;
+
+                for (index, child_id) in self.children.iter().enumerate() {
+                    if let Some(child_shape) = shapes_pool.get(child_id) {
+                        let child_extrect = child_shape.calculate_extrect(shapes_pool, scale);
+
+                        if index == 0 {
+                            mask_rect = Some(child_extrect);
+                        } else {
+                            match content_rect.as_mut() {
+                                Some(r) => r.join(child_extrect),
+                                None => content_rect = Some(child_extrect),
+                            }
+                        }
+                    }
+                }
+
+                match (mask_rect, content_rect) {
+                    (Some(mut mask), Some(content)) => {
+                        if mask.intersect(content) {
+                            rect.join(mask);
+                        }
+                    }
+                    (Some(mask), None) | (None, Some(mask)) => {
+                        rect.join(mask);
+                    }
+                    (None, None) => {}
+                }
+            }
+
+            Type::Group(_) | Type::Frame(_) if !self.clip_content => {
+                // For frames and groups, we must always calculate extrect for all children
+                // to ensure accurate bounds that include nested content across all tiles.
+                // Using selrect for children can cause frames to be incorrectly omitted from
+                // tiles where they have nested content.
+                for child_id in self.children_ids_iter(false) {
+                    if let Some(child_shape) = shapes_pool.get(child_id) {
+                        // Always calculate full extrect for children to ensure accurate bounds
+                        let child_extrect = child_shape.calculate_extrect(shapes_pool, scale);
                         rect.join(child_extrect);
                     }
                 }
             }
+
+            _ => {}
         }
 
-        rect
+        Bounds::from_rect(&rect)
+    }
+
+    pub fn apply_children_blur(&self, bounds: Bounds, tree: ShapesPoolRef) -> Bounds {
+        let mut rect = bounds.to_rect();
+        let mut children_blur = 0.0;
+        let mut current_parent_id = self.parent_id;
+
+        while let Some(parent_id) = current_parent_id {
+            if parent_id.is_nil() {
+                break;
+            }
+
+            if let Some(parent) = tree.get(&parent_id) {
+                match parent.shape_type {
+                    Type::Frame(_) | Type::Group(_) => {
+                        if let Some(blur) = parent.blur {
+                            if !blur.hidden && blur.blur_type == BlurType::LayerBlur {
+                                children_blur += blur.value;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                current_parent_id = parent.parent_id;
+            } else {
+                break;
+            }
+        }
+
+        let sigma = radius_to_sigma(children_blur);
+        let blur = skia::image_filters::blur((sigma, sigma), None, None, None);
+        if let Some(image_filter) = blur {
+            let blur_bounds = image_filter.compute_fast_bounds(rect);
+            rect.join(blur_bounds);
+        }
+        Bounds::from_rect(&rect)
+    }
+
+    pub fn calculate_extrect(&self, shapes_pool: ShapesPoolRef, scale: f32) -> math::Rect {
+        // `scale` is forwarded to children but intentionally NOT part of the cache key.
+        if let Some(cached_extrect) = *self.extrect_cache.borrow() {
+            return cached_extrect;
+        }
+
+        let extrect = self.calculate_extrect_uncached(shapes_pool, scale);
+
+        *self.extrect_cache.borrow_mut() = Some(extrect);
+        extrect
+    }
+
+    fn calculate_extrect_uncached(&self, shapes_pool: ShapesPoolRef, scale: f32) -> math::Rect {
+        let shape = self;
+        let max_stroke = Stroke::max_bounds_width(shape.strokes.iter(), shape.is_open());
+
+        let mut bounds = match &shape.shape_type {
+            Type::Path(_) | Type::Bool(_) => {
+                if let Some(path) = shape.get_skia_path() {
+                    let cap_margin = shape.cap_bounds_margin();
+                    let rect = path
+                        .compute_tight_bounds()
+                        .with_outset((max_stroke, max_stroke));
+                    self.apply_cap_bounds(Bounds::from_rect(&rect), cap_margin)
+                } else {
+                    shape.calculate_bounds(false)
+                }
+            }
+            Type::Text(text_content) => {
+                // FIXME: we need to recalculate the text bounds here because the shape's selrect
+                text_content.calculate_bounds(shape, false)
+            }
+            _ => shape.calculate_bounds(false),
+        };
+
+        bounds = self.apply_stroke_bounds(bounds, max_stroke);
+        bounds = self.apply_shadow_bounds(bounds);
+        bounds = self.apply_blur_bounds(bounds);
+        bounds = self.apply_children_bounds(bounds, shapes_pool, scale);
+        bounds = self.apply_children_blur(bounds, shapes_pool);
+
+        if !self.transform.is_identity() {
+            // Expand everything in the shape's local axis-aligned space first (strokes,
+            // shadows, blur, children). Only after that do we map the resulting bounds
+            // through the shape transform so rotation/skew is reflected in the final
+            // extrect.
+            let mut matrix = self.transform;
+            let center = self.center();
+            matrix.post_translate(center);
+            matrix.pre_translate(-center);
+            bounds.transform_mut(&matrix);
+        }
+        bounds.to_rect()
+    }
+
+    pub fn left_top(&self) -> Point {
+        Point::new(self.selrect.left, self.selrect.top)
     }
 
     pub fn center(&self) -> Point {
         self.selrect.center()
     }
 
+    // TODO: This can be used in more places
+    pub fn centered_transform(&self) -> Matrix {
+        let center = self.center();
+        let mut matrix = self.transform;
+        matrix.post_translate(center);
+        matrix.pre_translate(-center);
+        matrix
+    }
+
     pub fn clip(&self) -> bool {
         self.clip_content
+    }
+
+    pub fn cap_bounds_margin(&self) -> f32 {
+        if !self.is_open() {
+            return 0.0;
+        }
+        self.strokes
+            .iter()
+            .map(|stroke| stroke.cap_bounds_margin())
+            .fold(0.0, f32::max)
     }
 
     pub fn mask_id(&self) -> Option<&Uuid> {
         self.children.first()
     }
 
-    pub fn children_ids(&self, include_hidden: bool) -> IndexSet<Uuid> {
+    pub fn children_count(&self) -> usize {
+        self.children_ids_iter(false).count()
+    }
+
+    pub fn children_ids(&self, include_hidden: bool) -> Vec<Uuid> {
         if include_hidden {
-            return self.children.clone().into_iter().rev().collect();
+            return self.children.iter().rev().copied().collect();
         }
 
         if let Type::Bool(_) = self.shape_type {
-            IndexSet::<Uuid>::new()
+            Vec::new()
         } else if let Type::Group(group) = self.shape_type {
             if group.masked {
                 self.children
                     .iter()
                     .rev()
                     .take(self.children.len() - 1)
-                    .cloned()
+                    .copied()
                     .collect()
             } else {
-                self.children.clone().into_iter().rev().collect()
+                self.children.iter().rev().copied().collect()
             }
         } else {
-            self.children.clone().into_iter().rev().collect()
+            self.children.iter().rev().copied().collect()
+        }
+    }
+
+    pub fn children_ids_iter(&self, include_hidden: bool) -> Box<dyn Iterator<Item = &Uuid> + '_> {
+        if include_hidden {
+            return Box::new(self.children.iter().rev());
+        }
+
+        if let Type::Bool(_) = self.shape_type {
+            Box::new([].iter())
+        } else if let Type::Group(group) = self.shape_type {
+            if group.masked {
+                Box::new(self.children.iter().rev().take(self.children.len() - 1))
+            } else {
+                Box::new(self.children.iter().rev())
+            }
+        } else {
+            Box::new(self.children.iter().rev())
+        }
+    }
+
+    /// Returns children in forward (non-reversed) order - useful for layout calculations
+    pub fn children_ids_iter_forward(
+        &self,
+        include_hidden: bool,
+    ) -> Box<dyn Iterator<Item = &Uuid> + '_> {
+        if include_hidden {
+            return Box::new(self.children.iter());
+        }
+
+        if let Type::Bool(_) = self.shape_type {
+            Box::new([].iter())
+        } else if let Type::Group(group) = self.shape_type {
+            if group.masked {
+                Box::new(self.children.iter().skip(1))
+            } else {
+                Box::new(self.children.iter())
+            }
+        } else {
+            Box::new(self.children.iter())
         }
     }
 
     pub fn all_children(
         &self,
-        shapes: &ShapesPool,
+        shapes: ShapesPoolRef,
         include_hidden: bool,
         include_self: bool,
-    ) -> IndexSet<Uuid> {
-        let all_children = self
-            .children_ids(include_hidden)
-            .into_iter()
-            .flat_map(|id| {
-                shapes
-                    .get(&id)
-                    .map(|s| s.all_children(shapes, include_hidden, true))
-                    .unwrap_or_default()
-            });
+    ) -> Vec<Uuid> {
+        let all_children = self.children_ids_iter(include_hidden).flat_map(|id| {
+            shapes
+                .get(id)
+                .map(|s| s.all_children(shapes, include_hidden, true))
+                .unwrap_or_default()
+        });
 
         if include_self {
             once(self.id).chain(all_children).collect()
@@ -853,58 +1228,79 @@ impl Shape {
         }
     }
 
-    /// Returns all ancestor shapes of this shape, traversing up the parent hierarchy
-    ///
-    /// This function walks up the parent chain starting from this shape's parent,
-    /// collecting all ancestor IDs. It stops when it reaches a nil UUID or when
-    /// an ancestor is hidden (unless include_hidden is true).
-    ///
-    /// # Arguments
-    /// * `shapes` - The shapes pool containing all shapes
-    /// * `include_hidden` - Whether to include hidden ancestors in the result
-    ///
-    /// # Returns
-    /// A set of ancestor UUIDs in traversal order (closest ancestor first)
-    pub fn all_ancestors(&self, shapes: &ShapesPool, include_hidden: bool) -> IndexSet<Uuid> {
-        let mut ancestors = IndexSet::new();
-        let mut current_id = self.id;
+    pub fn all_children_iter<'a>(
+        &'a self,
+        shapes: ShapesPoolRef<'a>,
+        include_hidden: bool,
+        include_self: bool,
+    ) -> Box<dyn Iterator<Item = Uuid> + 'a> {
+        let all_children = self.children_ids_iter(include_hidden).flat_map(move |id| {
+            if let Some(shape) = shapes.get(id) {
+                shape.all_children_iter(shapes, include_hidden, true)
+            } else {
+                Box::new(std::iter::empty())
+            }
+        });
 
-        // Traverse upwards using parent_id
+        if include_self {
+            Box::new(once(self.id).chain(all_children))
+        } else {
+            Box::new(all_children)
+        }
+    }
+
+    pub fn get_matrix(&self) -> Matrix {
+        let mut matrix = Matrix::new_identity();
+        matrix.post_translate(self.left_top());
+        matrix.post_rotate(self.rotation, self.center());
+        matrix
+    }
+
+    #[allow(dead_code)]
+    pub fn get_concatenated_matrix(&self, shapes: ShapesPoolRef) -> Matrix {
+        let mut matrix = Matrix::new_identity();
+        let mut current_id = self.id;
         while let Some(parent_id) = shapes.get(&current_id).and_then(|s| s.parent_id) {
-            // If the parent_id is the zero UUID, there are no more ancestors
             if parent_id == Uuid::nil() {
                 break;
             }
 
-            // Check if the ancestor is hidden
             if let Some(parent) = shapes.get(&parent_id) {
-                if !include_hidden && parent.hidden() {
-                    break;
-                }
-                ancestors.insert(parent_id);
+                matrix.pre_concat(&parent.get_matrix());
                 current_id = parent_id;
             } else {
+                // FIXME: This should panic! I've removed it temporarily until
+                // we fix the problems with shapes without parents.
+                // panic!("Parent can't be found");
                 break;
             }
         }
-
-        ancestors
+        matrix
     }
 
     pub fn image_filter(&self, scale: f32) -> Option<skia::ImageFilter> {
-        if !self.blur.hidden {
-            match self.blur.blur_type {
-                BlurType::None => None,
-                BlurType::Layer => skia::image_filters::blur(
-                    (self.blur.value * scale, self.blur.value * scale),
-                    None,
-                    None,
-                    None,
-                ),
-            }
-        } else {
-            None
-        }
+        self.blur
+            .filter(|blur| !blur.hidden)
+            .and_then(|blur| match blur.blur_type {
+                BlurType::LayerBlur => {
+                    let sigma = radius_to_sigma(blur.value * scale);
+                    skia::image_filters::blur((sigma, sigma), None, None, None)
+                }
+                BlurType::BackgroundBlur => None,
+            })
+    }
+
+    #[allow(dead_code)]
+    pub fn mask_filter(&self, scale: f32) -> Option<skia::MaskFilter> {
+        self.blur
+            .filter(|blur| !blur.hidden)
+            .and_then(|blur| match blur.blur_type {
+                BlurType::LayerBlur => {
+                    let sigma = radius_to_sigma(blur.value * scale);
+                    skia::MaskFilter::blur(skia::BlurStyle::Normal, sigma, Some(true))
+                }
+                BlurType::BackgroundBlur => None,
+            })
     }
 
     pub fn is_recursive(&self) -> bool {
@@ -912,6 +1308,10 @@ impl Shape {
             self.shape_type,
             Type::Frame(_) | Type::Group(_) | Type::Bool(_)
         )
+    }
+
+    pub fn is_open(&self) -> bool {
+        matches!(&self.shape_type, Type::Path(p) if p.is_open())
     }
 
     pub fn add_shadow(&mut self, shadow: Shadow) {
@@ -924,16 +1324,38 @@ impl Shape {
         self.shadows.clear();
     }
 
+    #[allow(dead_code)]
     pub fn drop_shadows(&self) -> impl DoubleEndedIterator<Item = &Shadow> {
         self.shadows
             .iter()
+            .rev()
             .filter(|shadow| shadow.style() == ShadowStyle::Drop)
     }
 
+    pub fn drop_shadows_visible(&self) -> impl DoubleEndedIterator<Item = &Shadow> {
+        self.shadows
+            .iter()
+            .rev()
+            .filter(|shadow| shadow.style() == ShadowStyle::Drop && !shadow.hidden())
+    }
+
+    #[allow(dead_code)]
     pub fn inner_shadows(&self) -> impl DoubleEndedIterator<Item = &Shadow> {
         self.shadows
             .iter()
+            .rev()
             .filter(|shadow| shadow.style() == ShadowStyle::Inner)
+    }
+
+    pub fn inner_shadows_visible(&self) -> impl DoubleEndedIterator<Item = &Shadow> {
+        self.shadows
+            .iter()
+            .rev()
+            .filter(|shadow| shadow.style() == ShadowStyle::Inner && !shadow.hidden())
+    }
+
+    pub fn shadows_visible(&self) -> impl DoubleEndedIterator<Item = &Shadow> {
+        self.shadows.iter().rev().filter(|shadow| !shadow.hidden())
     }
 
     pub fn to_path_transform(&self) -> Option<Matrix> {
@@ -961,6 +1383,7 @@ impl Shape {
     }
 
     pub fn clear_text(&mut self) {
+        self.invalidate_extrect();
         if let Type::Text(old_text_content) = &self.shape_type {
             let new_text_content = TextContent::new(self.selrect, old_text_content.grow_type());
             self.shape_type = Type::Text(new_text_content);
@@ -969,12 +1392,11 @@ impl Shape {
 
     pub fn get_skia_path(&self) -> Option<skia::Path> {
         if let Some(path) = self.shape_type.path() {
-            let mut skia_path = path.to_skia_path();
-            if let Some(path_transform) = self.to_path_transform() {
-                skia_path.transform(&path_transform);
-            }
-            if let Some("evenodd") = self.svg_attrs.get("fill-rule").map(String::as_str) {
-                skia_path.set_fill_type(skia::PathFillType::EvenOdd);
+            let mut skia_path = path.to_skia_path(self.svg_attrs.as_ref());
+            if !math::identitish(&self.transform) {
+                if let Some(path_transform) = self.to_path_transform() {
+                    skia_path = skia_path.make_transform(&path_transform);
+                }
             }
             Some(skia_path)
         } else {
@@ -982,7 +1404,122 @@ impl Shape {
         }
     }
 
+    /// Same `concat` applied around [`center`](Self::center) as in `render_shape` (non-text branch).
+    fn shape_document_transform(&self) -> Matrix {
+        let c = self.center();
+        let mut m = self.transform;
+        m.post_translate(c);
+        m.pre_translate(-c);
+        m
+    }
+
+    /// Fill silhouette only, document space (matches fill rendering).
+    fn drag_crop_fill_clip_path_skia(&self) -> Option<skia::Path> {
+        match &self.shape_type {
+            Type::Rect(r) => {
+                let p = Path::new(shape_to_path::rect_segments(self, r.corners));
+                Some(p.to_skia_path(self.svg_attrs.as_ref()))
+            }
+            Type::Circle => {
+                let p = Path::new(shape_to_path::circle_segments(self));
+                Some(p.to_skia_path(self.svg_attrs.as_ref()))
+            }
+            Type::Path(_) | Type::Bool(_) => {
+                let sk = self.get_skia_path()?;
+                Some(sk.make_transform(&self.shape_document_transform()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this shape may use the backbuffer crop fast path during interactive drag.
+    ///
+    /// Conservative: only effects and fills that match what we snapshot and clip in
+    /// [`drag_crop_clip_path`](Self::drag_crop_clip_path). Text is never safe (glyph layout,
+    /// no `drag_crop_clip_path`).
+    pub fn is_safe_for_drag_crop_cache(&self, shapes_pool: ShapesPoolRef) -> bool {
+        if matches!(self.shape_type, Type::Text(_)) {
+            return false;
+        }
+
+        // If a frame shows overflow (clip_content=false) and its visible content exceeds the
+        // frame bounds, a cached crop anchored to the frame can easily become incorrect while
+        // moving (children can extend beyond selrect). Be conservative and render live.
+        if matches!(self.shape_type, Type::Frame(_)) && !self.clip_content {
+            let extrect = self.extrect(shapes_pool, 1.0);
+            let sr = self.selrect;
+            let exceeds = extrect.left < sr.left
+                || extrect.top < sr.top
+                || extrect.right > sr.right
+                || extrect.bottom > sr.bottom;
+            if exceeds {
+                return false;
+            }
+        }
+
+        self.blur.is_none()
+            && self.background_blur.is_none()
+            && self.shadows.is_empty()
+            && (self.opacity - 1.0).abs() <= 1e-4
+            && self.blend_mode().0 == skia::BlendMode::SrcOver
+    }
+
+    /// Fill + visible strokes in **document space** for clipping interactive drag textures.
+    ///
+    /// The backbuffer crop uses an axis-aligned `extrect`; we clip the blit so backdrop pixels
+    /// outside the real silhouette (fill and stroke regions) are not smeared. Strokes use
+    /// [`stroke_to_path`](stroke_to_path) like the main renderer, then union with the fill path.
+    pub fn drag_crop_clip_path(&self) -> Option<skia::Path> {
+        let mut acc = self.drag_crop_fill_clip_path_skia()?;
+        if !self.has_visible_strokes() {
+            return Some(acc);
+        }
+
+        let shape_path = match &self.shape_type {
+            Type::Rect(r) => Path::new(shape_to_path::rect_segments(self, r.corners)),
+            Type::Circle => Path::new(shape_to_path::circle_segments(self)),
+            Type::Path(_) | Type::Bool(_) => self.shape_type.path()?.clone(),
+            _ => return Some(acc),
+        };
+
+        let path_transform = self.to_path_transform();
+        let apply_doc_transform = path_transform.is_some();
+
+        for stroke in self.visible_strokes() {
+            let Some(stroke_region) = stroke_to_path(
+                stroke,
+                &shape_path,
+                path_transform.as_ref(),
+                &self.selrect,
+                self.svg_attrs.as_ref(),
+                true,
+            ) else {
+                continue;
+            };
+            let mut sk = stroke_region.to_skia_path(self.svg_attrs.as_ref());
+            if apply_doc_transform {
+                sk = sk.make_transform(&self.shape_document_transform());
+            }
+            acc = acc.op(&sk, skia::PathOp::Union).unwrap_or(acc);
+        }
+
+        Some(acc)
+    }
+
     fn transform_selrect(&mut self, transform: &Matrix) {
+        if math::is_move_only_matrix(transform) {
+            let tx = transform.translate_x();
+            let ty = transform.translate_y();
+            // `self.transform` (rotation/scale around center) is unchanged by translation.
+            self.selrect = math::Rect::from_xywh(
+                self.selrect.left + tx,
+                self.selrect.top + ty,
+                self.selrect.width(),
+                self.selrect.height(),
+            );
+            return;
+        }
+
         let mut center = self.selrect.center();
         center = transform.map_point(center);
 
@@ -1002,24 +1539,82 @@ impl Shape {
     }
 
     pub fn apply_transform(&mut self, transform: &Matrix) {
-        self.invalidate_extrect();
         self.transform_selrect(transform);
+
+        // Outsets (strokes, shadows, blur, children) are translation-invariant,
+        // so the cached extrect can be shifted instead of invalidated.
+        // The bounds cache must always be invalidated so that callers such as
+        // grid_cell_data get the updated position after a drag.
+        if math::is_move_only_matrix(transform) {
+            let tx = transform.translate_x();
+            let ty = transform.translate_y();
+            if let Some(rect) = self.extrect_cache.borrow_mut().as_mut() {
+                *rect = math::Rect::from_xywh(
+                    rect.left + tx,
+                    rect.top + ty,
+                    rect.width(),
+                    rect.height(),
+                );
+            }
+            self.invalidate_bounds();
+        } else {
+            self.invalidate_extrect();
+            self.invalidate_bounds();
+        }
+
         if let shape_type @ (Type::Path(_) | Type::Bool(_)) = &mut self.shape_type {
             if let Some(path) = shape_type.path_mut() {
                 path.transform(transform);
             }
-        }
-        if let Type::Text(text) = &mut self.shape_type {
+        } else if let Type::Text(text) = &mut self.shape_type {
             text.transform(transform);
+        } else if let Type::SVGRaw(_) = &mut self.shape_type {
+            self.svg_transform = Some(*transform);
         }
     }
 
-    pub fn transformed(&self, transform: Option<&Matrix>) -> Self {
-        let mut shape = self.clone();
-        if let Some(transform) = transform {
-            shape.apply_transform(transform);
+    pub fn apply_structure(&mut self, structure: &Vec<StructureEntry>) {
+        let mut result = IndexSet::<Uuid>::from_iter(self.children.iter().copied());
+        let mut to_remove = HashSet::<&Uuid>::new();
+
+        for st in structure {
+            match st.entry_type {
+                StructureEntryType::AddChild => {
+                    if result.is_empty() {
+                        result.insert(st.id);
+                    } else {
+                        let index = usize::min(result.len() - 1, st.index as usize);
+                        result.shift_insert(index, st.id);
+                    }
+                }
+                StructureEntryType::RemoveChild => {
+                    to_remove.insert(&st.id);
+                }
+                _ => {}
+            }
         }
-        shape
+
+        self.children = result
+            .iter()
+            .filter(|id| !to_remove.contains(id))
+            .copied()
+            .collect();
+    }
+
+    pub fn transformed(
+        &self,
+        transform: Option<&Matrix>,
+        structure: Option<&Vec<StructureEntry>>,
+    ) -> Self {
+        let mut shape: Cow<Shape> = Cow::Borrowed(self);
+        if let Some(transform) = transform {
+            shape.to_mut().apply_transform(transform);
+        }
+        if let Some(structure) = structure {
+            shape.to_mut().apply_structure(structure);
+        }
+
+        shape.into_owned()
     }
 
     pub fn is_absolute(&self) -> bool {
@@ -1031,9 +1626,22 @@ impl Shape {
 
     pub fn z_index(&self) -> i32 {
         match &self.layout_item {
-            Some(LayoutItem { z_index, .. }) => *z_index,
+            Some(LayoutItem {
+                z_index: Some(z), ..
+            }) => *z,
             _ => 0,
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn has_z_index(&self) -> bool {
+        matches!(
+            &self.layout_item,
+            Some(LayoutItem {
+                z_index: Some(_),
+                ..
+            })
+        )
     }
 
     pub fn is_layout_vertical_auto(&self) -> bool {
@@ -1068,55 +1676,156 @@ impl Shape {
         !self.fills.is_empty()
     }
 
-    pub fn has_visible_strokes(&self) -> bool {
-        self.visible_strokes().next().is_some()
-    }
-
-    #[allow(dead_code)]
-    pub fn has_visible_inner_strokes(&self) -> bool {
-        self.visible_strokes().any(|s| s.kind == StrokeKind::Inner)
-    }
-    /*
-      Returns the list of children taking into account the structure modifiers
-    */
-    pub fn modified_children_ids(
-        &self,
-        structure: Option<&Vec<StructureEntry>>,
-        include_hidden: bool,
-    ) -> IndexSet<Uuid> {
-        if let Some(structure) = structure {
-            let mut result: Vec<Uuid> =
-                Vec::from_iter(self.children_ids(include_hidden).iter().copied());
-            let mut to_remove = HashSet::<&Uuid>::new();
-
-            for st in structure {
-                match st.entry_type {
-                    StructureEntryType::AddChild => {
-                        result.insert(result.len() - st.index as usize, st.id);
-                    }
-                    StructureEntryType::RemoveChild => {
-                        to_remove.insert(&st.id);
-                    }
-                    _ => {}
-                }
-            }
-
-            let ret: IndexSet<Uuid> = result
-                .iter()
-                .filter(|id| !to_remove.contains(id))
-                .copied()
-                .collect();
-
-            ret
-        } else {
-            self.children_ids(include_hidden)
+    /// Determines if this frame or group can be flattened (doesn't affect children visually)
+    /// A container can be flattened if it has no visual effects that affect its children
+    /// and doesn't render its own content (no fills/strokes)
+    pub fn can_flatten(&self) -> bool {
+        // Only frames and groups can be flattened
+        if !matches!(self.shape_type, Type::Frame(_) | Type::Group(_)) {
+            return false;
         }
+
+        // Cannot flatten if it has visual effects that affect children:
+
+        if self.clip_content {
+            return false;
+        }
+
+        if !self.transform.is_identity() {
+            return false;
+        }
+
+        if self.opacity != 1.0 {
+            return false;
+        }
+
+        if self.blend_mode() != BlendMode::default() {
+            return false;
+        }
+
+        if self.blur.is_some() || self.background_blur.is_some() {
+            return false;
+        }
+
+        if !self.shadows.is_empty() {
+            return false;
+        }
+
+        if let Type::Group(group) = &self.shape_type {
+            if group.masked {
+                return false;
+            }
+        }
+
+        if self.hidden {
+            return false;
+        }
+
+        // If the container itself has fills/strokes, it renders something visible
+        // We cannot flatten containers that render their own background/border
+        // because they need to be rendered even if they don't affect children
+        if self.has_fills() || self.has_visible_strokes() {
+            return false;
+        }
+
+        true
+    }
+
+    /// Checks if this shape needs a layer for rendering due to visual effects
+    /// (opacity < 1.0, non-default blend mode, or frame clip layer blur)
+    pub fn needs_layer(&self) -> bool {
+        self.opacity() < 1.0
+            || self.blend_mode().0 != skia::BlendMode::SrcOver
+            || self.has_frame_clip_layer_blur()
+            || (matches!(self.shape_type, Type::Group(g) if g.masked))
+    }
+
+    /// Checks if this frame has clip layer blur (affects children)
+    /// A frame has clip layer blur if it clips content and has layer blur
+    pub fn has_frame_clip_layer_blur(&self) -> bool {
+        self.frame_clip_layer_blur().is_some()
+    }
+
+    /// Returns the frame clip layer blur if this frame has one
+    /// A frame has clip layer blur if it clips content and has layer blur
+    pub fn frame_clip_layer_blur(&self) -> Option<Blur> {
+        use crate::shapes::BlurType;
+        match self.shape_type {
+            Type::Frame(_) if self.clip_content => self.blur.filter(|blur| {
+                !blur.hidden && blur.blur_type == BlurType::LayerBlur && blur.value > 0.0
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn masked_group_layer_blur(&self) -> Option<Blur> {
+        use crate::shapes::BlurType;
+        match self.shape_type {
+            Type::Group(Group { masked: true }) => self.blur.filter(|blur| {
+                !blur.hidden && blur.blur_type == BlurType::LayerBlur && blur.value > 0.0
+            }),
+            _ => None,
+        }
+    }
+
+    /// Checks if this shape has visual effects that might extend its bounds beyond selrect
+    /// Shapes with these effects require expensive extrect calculation for accurate visibility checks
+    pub fn has_effects_that_extend_bounds(&self) -> bool {
+        !self.shadows.is_empty()
+            || self.blur.is_some()
+            || !self.strokes.is_empty()
+            || !self.transform.is_identity()
+            || !math::is_close_to(self.rotation, 0.0)
+            || matches!(self.shape_type, Type::Group(_) | Type::Frame(_))
+            || matches!(self.shape_type, Type::Text(_))
+    }
+
+    pub fn count_visible_inner_strokes(&self) -> usize {
+        self.visible_strokes()
+            .filter(|s| s.kind == StrokeKind::Inner)
+            .count()
+    }
+
+    /// True when the shape has at least one visible inner stroke (open paths render strokes as center).
+    pub fn has_inner_stroke(&self) -> bool {
+        let is_open = self.is_open();
+        self.visible_strokes()
+            .any(|s| s.render_kind(is_open) == StrokeKind::Inner)
+    }
+
+    pub fn drop_shadow_paints(&self) -> Vec<skia_safe::Paint> {
+        let drop_shadows: Vec<&Shadow> = self.drop_shadows_visible().collect();
+
+        drop_shadows
+            .into_iter()
+            .map(|shadow| {
+                let mut paint = skia_safe::Paint::default();
+                let filter = shadow.get_drop_shadow_filter();
+                paint.set_image_filter(filter);
+                paint
+            })
+            .collect()
+    }
+
+    pub fn inner_shadow_paints(&self) -> Vec<skia_safe::Paint> {
+        let inner_shadows: Vec<&Shadow> = self.inner_shadows_visible().collect();
+
+        inner_shadows
+            .into_iter()
+            .map(|shadow| {
+                let mut paint = skia_safe::Paint::default();
+                let filter = shadow.get_inner_shadow_filter();
+                paint.set_image_filter(filter);
+                paint
+            })
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::ShapesPool;
 
     fn any_shape() -> Shape {
         Shape::new(Uuid::nil())
@@ -1135,6 +1844,38 @@ mod tests {
     }
 
     #[test]
+    fn layer_blur_and_background_blur_can_coexist() {
+        let mut shape = any_shape();
+
+        let layer_blur = Blur::new(BlurType::LayerBlur, false, 4.0);
+        let background_blur = Blur::new(BlurType::BackgroundBlur, false, 8.0);
+
+        shape.set_blur(Some(layer_blur));
+        shape.set_background_blur(Some(background_blur));
+
+        assert_eq!(shape.blur, Some(layer_blur));
+        assert_eq!(shape.background_blur, Some(background_blur));
+        assert_eq!(shape.visible_background_blur(), Some(background_blur));
+
+        // Clearing one type must not affect the other.
+        shape.set_blur(None);
+        assert_eq!(shape.blur, None);
+        assert_eq!(shape.background_blur, Some(background_blur));
+
+        shape.set_blur(Some(layer_blur));
+        shape.set_background_blur(None);
+        assert_eq!(shape.blur, Some(layer_blur));
+        assert_eq!(shape.background_blur, None);
+    }
+
+    #[test]
+    fn hidden_background_blur_is_not_visible() {
+        let mut shape = any_shape();
+        shape.set_background_blur(Some(Blur::new(BlurType::BackgroundBlur, true, 8.0)));
+        assert_eq!(shape.visible_background_blur(), None);
+    }
+
+    #[test]
     fn test_set_corners() {
         let mut shape = any_shape();
         shape.set_corners((10.0, 20.0, 30.0, 40.0));
@@ -1148,6 +1889,13 @@ mod tests {
                     Point { x: 40.0, y: 40.0 }
                 ])
             );
+        } else {
+            unreachable!();
+        }
+
+        shape.set_corners((0.0, 0.0, 0.0, 0.0));
+        if let Type::Rect(Rect { corners, .. }) = shape.shape_type {
+            assert_eq!(corners, None);
         } else {
             unreachable!();
         }
@@ -1175,5 +1923,43 @@ mod tests {
 
         assert_eq!(shape.selrect().width(), 20.0);
         assert_eq!(shape.selrect().height(), 20.0);
+    }
+
+    #[test]
+    fn masked_group_extrect_matches_mask_intersection() {
+        let mut pool = ShapesPool::new();
+        pool.initialize(3);
+
+        let group_id = Uuid::new_v4();
+        let mask_id = Uuid::new_v4();
+        let content_id = Uuid::new_v4();
+
+        {
+            let group = pool.add_shape(group_id);
+            group.set_shape_type(Type::Group(Group { masked: true }));
+            group.children = vec![mask_id, content_id];
+        }
+
+        {
+            let mask = pool.add_shape(mask_id);
+            mask.set_shape_type(Type::Rect(Rect::default()));
+            mask.set_selrect(0.0, 0.0, 50.0, 50.0);
+            mask.set_parent(group_id);
+        }
+
+        {
+            let content = pool.add_shape(content_id);
+            content.set_shape_type(Type::Rect(Rect::default()));
+            content.set_selrect(-10.0, -10.0, 110.0, 110.0);
+            content.set_parent(group_id);
+        }
+
+        let group = pool.get(&group_id).expect("group should exist");
+        let extrect = group.calculate_extrect(&pool, 1.0);
+
+        assert_eq!(extrect.left, 0.0);
+        assert_eq!(extrect.top, 0.0);
+        assert_eq!(extrect.right, 50.0);
+        assert_eq!(extrect.bottom, 50.0);
     }
 }

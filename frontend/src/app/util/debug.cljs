@@ -2,9 +2,11 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
-(ns app.util.debug)
+(ns app.util.debug
+  (:require
+   [app.main.store :as st]))
 
 (defonce state (atom #{#_:events}))
 
@@ -94,8 +96,23 @@
     ;; Show some information about the WebGL context.
     :gl-context
 
-    ;; Show viewbox
-    :wasm-viewbox})
+    ;; Show viewbox.
+    :wasm-viewbox
+
+    ;; Makes the GL context to fail on initialization.
+    :wasm-gl-context-init-error
+
+    ;; Event times
+    :events-times})
+
+(defn handle-change
+  []
+  (set! st/*debug-events* (contains? @state :events))
+  (set! st/*debug-events-time* (contains? @state :events-times)))
+
+(when *assert*
+  (handle-change)
+  (add-watch state :watcher handle-change))
 
 (defn enable!
   [option]

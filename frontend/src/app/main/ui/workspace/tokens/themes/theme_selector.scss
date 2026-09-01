@@ -2,28 +2,30 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@import "refactor/common-refactor.scss";
+@use "refactor/common-refactor.scss" as deprecated;
 
 .custom-select {
   --custom-select-border-color: var(--menu-background-color);
   --custom-select-bg-color: var(--menu-background-color);
   --custom-select-icon-color: var(--color-foreground-secondary);
   --custom-select-text-color: var(--menu-foreground-color);
+
   position: relative;
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  height: $s-32;
+  height: deprecated.$s-32;
   width: 100%;
   margin: 0;
-  padding: $s-8;
-  border-radius: $br-8;
+  padding: deprecated.$s-8;
+  border-radius: deprecated.$br-8;
   background-color: var(--custom-select-bg-color);
-  border: $s-1 solid var(--custom-select-border-color);
+  border: deprecated.$s-1 solid var(--custom-select-border-color);
   color: var(--custom-select-text-color);
   cursor: pointer;
+
   &:hover {
     --custom-select-bg-color: var(--menu-background-color-hover);
     --custom-select-border-color: var(--menu-background-color);
@@ -41,9 +43,10 @@
 }
 
 .group {
-  @include textEllipsis;
+  @include deprecated.text-ellipsis;
+
   display: block;
-  padding: $s-8;
+  padding: deprecated.$s-8;
   color: var(--color-foreground-secondary);
 }
 
@@ -52,42 +55,47 @@
   --custom-select-border-color: var(--menu-border-color-disabled);
   --custom-select-icon-color: var(--menu-foreground-color-disabled);
   --custom-select-text-color: var(--menu-foreground-color-disabled);
+
   pointer-events: none;
   cursor: default;
 }
 
 .dropdown-button {
-  @include flexCenter;
+  @include deprecated.flex-center;
+
   color: var(--color-foreground-secondary);
 }
 
 .current-icon {
-  @include flexCenter;
-  width: $s-24;
-  padding-right: $s-4;
+  @include deprecated.flex-center;
+
+  width: deprecated.$s-24;
+  padding-right: deprecated.$s-4;
 }
 
 .custom-select-dropdown {
-  @extend .dropdown-wrapper;
+  @extend %dropdown-wrapper;
 }
 
 .separator {
   margin: 0;
-  height: $s-2;
-  border-block-start: $s-1 solid color-mix(in hsl, var(--color-foreground-secondary) 20%, transparent);
+  height: deprecated.$s-2;
+  border-block-start: deprecated.$s-1 solid
+    color-mix(in hsl, var(--color-foreground-secondary) 20%, transparent);
 }
 
 .custom-select-dropdown[data-direction="up"] {
-  bottom: $s-32;
+  bottom: deprecated.$s-32;
   top: auto;
 }
 
 .sub-item {
-  padding-left: $s-16;
+  padding-left: deprecated.$s-16;
 }
 
 .checked-element-button {
-  @extend .dropdown-element-base;
+  @extend %dropdown-element-base;
+
   position: relative;
   display: flex;
   justify-content: space-between;
@@ -95,17 +103,20 @@
 }
 
 .checked-element {
-  @extend .dropdown-element-base;
+  @extend %dropdown-element-base;
+
   &.is-selected {
     color: var(--menu-foreground-color);
   }
+
   &.disabled {
     display: none;
   }
 }
 
 .check-icon {
-  @include flexCenter;
+  @include deprecated.flex-center;
+
   color: var(--icon-foreground-primary);
   visibility: hidden;
 }
@@ -120,12 +131,13 @@
 }
 
 .current-label {
-  @include textEllipsis;
+  @include deprecated.text-ellipsis;
 }
 
 .dropdown-portal {
-  --menu-max-height: #{$s-400};
-  @extend .new-scrollbar;
+  --menu-max-height: #{deprecated.$s-400};
+
+  @extend %new-scrollbar;
 
   position: absolute;
 }

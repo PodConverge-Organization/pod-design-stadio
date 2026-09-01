@@ -1,2 +1,4 @@
-//var penpotPublicURI = "http://design.podconverge.com";
+// Frontend configuration
 //var penpotFlags = "";
+//var penpotOIDCName = "";
+//var penpotDesignStudioRecoveryURI = "";

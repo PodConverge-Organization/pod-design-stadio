@@ -2,12 +2,13 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.uri
   (:refer-clojure :exclude [uri?])
   (:require
    [app.common.data.macros :as dm]
+   [cuerdas.core :as str]
    [lambdaisland.uri :as u]
    [lambdaisland.uri.normalize :as un])
   #?(:clj
@@ -57,6 +58,14 @@
                   (remove #(nil? (second %)))
                   (map (fn [[k v]] [(key-fn k) (value-fn v)]))))
         (u/map->query-string))))
+
+(defn ensure-path-slash
+  [u]
+  (update (uri u) :path
+          (fn [path]
+            (if (str/ends-with? path "/")
+              path
+              (str path "/")))))
 
 #?(:clj
    (defmethod print-method lambdaisland.uri.URI [^URI this ^java.io.Writer writer]

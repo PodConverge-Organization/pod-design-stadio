@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.viewer
   (:require-macros [app.main.style :as stl])
@@ -24,19 +24,18 @@
    [app.main.ui.context :as ctx]
    [app.main.ui.ds.product.loader :refer [loader*]]
    [app.main.ui.hooks :as hooks]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.main.ui.modal :refer [modal-container*]]
    [app.main.ui.viewer.comments :refer [comments-layer comments-sidebar*]]
    [app.main.ui.viewer.header :as header]
-   [app.main.ui.viewer.inspect :as inspect]
    [app.main.ui.viewer.interactions :as interactions]
    [app.main.ui.viewer.login]
    [app.main.ui.viewer.share-link]
-   [app.main.ui.viewer.thumbnails :refer [thumbnails-panel]]
+   [app.main.ui.viewer.thumbnails :refer [thumbnails-panel*]]
    [app.util.dom :as dom]
    [app.util.dom.normalize-wheel :as nw]
    [app.util.globals :as globals]
-   [app.util.i18n :as i18n :refer [tr]]
+   [app.util.i18n :refer [tr]]
    [app.util.keyboard :as kbd]
    [app.util.object :as obj]
    [app.util.webapi :as wapi]
@@ -51,11 +50,17 @@
 (def current-overlays-ref
   (l/derived :viewer-overlays st/state))
 
+(defn- effective-section
+  [section]
+  (if (= section :inspect)
+    :interactions
+    section))
+
 (defn- calculate-size
   "Calculate the total size we must reserve for the frame, including possible paddings
-   added because shadows or blur."
+   added because shadows, blur, or strokes."
   [objects frame zoom]
-  (let [{:keys [x y width height]} (gsb/get-object-bounds objects frame)]
+  (let [{:keys [x y width height]} (gsb/get-object-bounds objects frame {:ignore-margin? false})]
     {:base-width  width
      :base-height height
      :x           x
@@ -103,19 +108,19 @@
                                       :left-bar left-bar)
                  :on-click go-prev-frame
                  :aria-label (tr "labels.previous")}
-        i/arrow])
+        deprecated-icon/arrow])
      (when (< (+ index 1) num-frames)
        [:button {:class (stl/css-case :viewer-go-next  true
                                       :comment-sidebar comment-sidebar
                                       :right-bar right-bar)
                  :on-click go-next-frame
                  :aria-label (tr "labels.next")}
-        i/arrow])
+        deprecated-icon/arrow])
      [:div {:class (stl/css-case :viewer-bottom true
                                  :left-bar left-bar)}
       [:button {:on-click go-first-frame
                 :class (stl/css :reset-button)}
-       i/reload]
+       deprecated-icon/reload]
       [:span {:class (stl/css :counter)}
        (str/join " / " [(+ index 1) num-frames])]
       [:span]]]))
@@ -186,7 +191,7 @@
                :style {:width (:width size)
                        :height (:height size)
                        :position "fixed"}}
-         [:& interactions/viewport
+         [:> interactions/viewport*
           {:frame overlay-frame
            :base-frame frame
            :frame-offset overlay-position
@@ -201,7 +206,7 @@
                       :height (:height size)
                       :left (* (:x overlay-position) zoom)
                       :top (* (:y overlay-position) zoom)}}
-        [:& interactions/viewport
+        [:> interactions/viewport*
          {:frame overlay-frame
           :base-frame frame
           :frame-offset overlay-position
@@ -236,7 +241,7 @@
                       :height (:height orig-size)
                       :position "relative"}}
 
-        [:& interactions/viewport
+        [:> interactions/viewport*
          {:frame orig-frame
           :base-frame orig-frame
           :frame-offset (gpt/point 0 0)
@@ -251,7 +256,7 @@
                     :height (:height size)
                     :position "relative"}}
 
-      [:& interactions/viewport
+      [:> interactions/viewport*
        {:frame frame
         :base-frame frame
         :frame-offset (gpt/point 0 0)
@@ -278,19 +283,15 @@
                           :zoom zoom}])]])
 
 (mf/defc viewer-content*
-  {::mf/props :obj}
-  [{:keys [data page-id share-id section index interactions-mode share]}]
-  (let [{:keys [file users project permissions]} data
+  [{:keys [data page-id section index interactions-mode share]}]
+  (let [section (effective-section section)
+        {:keys [file users project permissions]} data
         allowed (or
                  (= section :interactions)
                  (and (= section :comments)
                       (or (:can-edit permissions)
                           (and (true? (:is-logged permissions))
-                               (= (:who-comment permissions) "all"))))
-                 (and (= section :inspect)
-                      (or (:can-edit permissions)
-                          (and (true? (:is-logged permissions))
-                               (= (:who-inspect permissions) "all")))))
+                               (= (:who-comment permissions) "all")))))
 
         local (mf/deref refs/viewer-local)
 
@@ -447,7 +448,7 @@
     (mf/use-effect
      (mf/deps nav-scroll)
      (fn []
-        ;; Set scroll position after navigate
+       ;; Set scroll position after navigate
        (when (number? nav-scroll)
          (let [viewer-section (dom/get-element "viewer-section")]
            (st/emit! (dv/reset-nav-scroll))
@@ -481,8 +482,8 @@
          :fit  (st/emit! dv/zoom-to-fit)
          :fill (st/emit! dv/zoom-to-fill)
          nil)
-        ;; Navigate animation needs to be started after navigation
-        ;; is complete, and we have the next page index.
+       ;; Navigate animation needs to be started after navigation
+       ;; is complete, and we have the next page index.
        (let [nav-animation (d/seek #(= (:kind %) :go-to-frame) (vals current-animations))]
          (when nav-animation
            (let [orig-viewport    (mf/ref-val orig-viewport-ref)
@@ -498,7 +499,7 @@
     (mf/use-effect
      (mf/deps current-animations)
      (fn []
-        ;; Overlay animations may be started when needed.
+       ;; Overlay animations may be started when needed.
        (when current-animations
          (doseq [[overlay-frame-id animation-vals] current-animations]
            (let [overlay-viewport (dom/get-element (str "overlay-" (str (:overlay-id animation-vals))))
@@ -543,8 +544,7 @@
     [:div#viewer-layout
      {:class (stl/css-case
               :force-visible (:show-thumbnails local)
-              :viewer-layout (not= section :inspect)
-              :inspect-layout (= section :inspect))
+              :viewer-layout true)
       :data-fullscreen fullscreen?
       :data-force-visible (:show-thumbnails local)}
 
@@ -556,11 +556,11 @@
                 :class (stl/css-case :thumbnails-close true
                                      :invisible (not (:show-thumbnails local false)))}]
 
-      [:& thumbnails-panel {:frames frames
-                            :show? (:show-thumbnails local false)
-                            :page page
-                            :index index
-                            :thumbnail-data (:thumbnails file)}]
+      [:> thumbnails-panel* {:frames frames
+                             :show (:show-thumbnails local false)
+                             :page page
+                             :index index
+                             :thumbnail-data (:thumbnails file)}]
 
       [:section#viewer-section {:ref viewer-section-ref
                                 :data-viewer-section true
@@ -578,36 +578,23 @@
             [:span (tr "viewer.frame-not-found")])]
 
          (some? frame)
-         (if (= :inspect section)
-           [:& inspect/viewport
-            {:frame frame
-             :page page
-             :file file
-             :section section
-             :local local
-             :size size
-             :index index
-             :viewer-pagination viewer-pagination
-             :interactions-mode interactions-mode
-             :share-id share-id}]
-
-           [:& (mf/provider ctx/current-zoom) {:value zoom}
-            [:& viewer-wrapper
-             {:wrapper-size wrapper-size
-              :orig-frame orig-frame
-              :orig-viewport-ref orig-viewport-ref
-              :orig-size orig-size
-              :page page
-              :file file
-              :users users
-              :current-viewport-ref current-viewport-ref
-              :size size
-              :frame frame
-              :interactions-mode interactions-mode
-              :overlays overlays
-              :zoom zoom
-              :section section
-              :index index}]]))]]
+         [:& (mf/provider ctx/current-zoom) {:value zoom}
+          [:& viewer-wrapper
+           {:wrapper-size wrapper-size
+            :orig-frame orig-frame
+            :orig-viewport-ref orig-viewport-ref
+            :orig-size orig-size
+            :page page
+            :file file
+            :users users
+            :current-viewport-ref current-viewport-ref
+            :size size
+            :frame frame
+            :interactions-mode interactions-mode
+            :overlays overlays
+            :zoom zoom
+            :section section
+            :index index}]])]]
 
      [:& header/header {:project project
                         :index index
@@ -624,7 +611,6 @@
 ;; --- Component: Viewer
 
 (mf/defc viewer*
-  {::mf/props :obj}
   [{:keys [file-id share-id page-id] :as props}]
   (mf/with-effect [file-id page-id share-id]
     (let [params {:file-id file-id
@@ -643,3 +629,8 @@
     [:> loader*  {:title (tr "labels.loading")
                   :overlay true}]))
 
+
+(mf/defc viewer-page*
+  {::mf/lazy-load true}
+  [props]
+  [:> viewer* props])

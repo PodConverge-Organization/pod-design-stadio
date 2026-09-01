@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.releases
   (:require
@@ -28,6 +28,14 @@
    [app.main.ui.releases.v1-9]
    [app.main.ui.releases.v2-0]
    [app.main.ui.releases.v2-1]
+   [app.main.ui.releases.v2-10]
+   [app.main.ui.releases.v2-11]
+   [app.main.ui.releases.v2-12]
+   [app.main.ui.releases.v2-13]
+   [app.main.ui.releases.v2-14]
+   [app.main.ui.releases.v2-15]
+   [app.main.ui.releases.v2-16]
+   [app.main.ui.releases.v2-17]
    [app.main.ui.releases.v2-2]
    [app.main.ui.releases.v2-3]
    [app.main.ui.releases.v2-4]
@@ -42,13 +50,12 @@
 
 ;;; --- RELEASE NOTES MODAL
 
-(mf/defc release-notes
-  {::mf/props :obj}
+(mf/defc release-notes*
   [{:keys [version]}]
   (let [slide* (mf/use-state :start)
         slide  (deref slide*)
 
-        klass* (mf/use-state "fadeInDown")
+        klass* (mf/use-state "fade-in-down")
         klass  (deref klass*)
 
         navigate
@@ -73,7 +80,7 @@
 
     (mf/with-effect [slide]
       (when (not= :start slide)
-        (reset! klass* "fadeIn"))
+        (reset! klass* "fade-in"))
       (let [sem (tm/schedule 300 #(reset! klass* nil))]
         (fn []
           (reset! klass* nil)
@@ -96,8 +103,8 @@
         version  (obj/get props "version")]
     (when (contains? versions version)
       [:div.relnotes
-       [:> release-notes props]])))
+       [:> release-notes* props]])))
 
 (defmethod rc/render-release-notes "0.0"
   [params]
-  (rc/render-release-notes (assoc params :version "2.9")))
+  (rc/render-release-notes (assoc params :version "2.17")))

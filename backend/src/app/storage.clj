@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.storage
   "Objects storage abstraction layer."
@@ -27,11 +27,16 @@
 
 (defn get-legacy-backend
   []
-  (let [name (cf/get :assets-storage-backend)]
+  (when-let [name (cf/get :assets-storage-backend)]
+    (l/wrn :hint "using deprecated configuration, please read 2.11 release notes"
+           :href "https://github.com/penpot/penpot/releases/tag/2.11.0")
     (case name
       :assets-fs :fs
       :assets-s3 :s3
       nil)))
+
+(def default-bucket
+  "file-media-object")
 
 (def valid-buckets
   #{"file-media-object"
@@ -39,6 +44,8 @@
     "file-object-thumbnail"
     "file-thumbnail"
     "profile"
+    "organization"
+    "tempfile"
     "file-data"
     "file-data-fragment"
     "file-change"})
@@ -113,13 +120,10 @@
 
 (defn- create-database-object
   [{:keys [::backend ::db/connectable]} {:keys [::content ::expired-at ::touched-at ::touch] :as params}]
-  (let [id     (or (:id params) (uuid/random))
+  (let [id     (or (::id params) (uuid/random))
         mdata  (cond-> (get-metadata params)
                  (satisfies? impl/IContentHash content)
-                 (assoc :hash (impl/get-hash content))
-
-                 :always
-                 (dissoc :id))
+                 (assoc :hash (impl/get-hash content)))
 
         touched-at (if touch
                      (or touched-at (ct/now))
@@ -131,7 +135,8 @@
         ;; still not deleted.
         result (when (and (::deduplicate? params)
                           (:hash mdata)
-                          (:bucket mdata))
+                          (:bucket mdata)
+                          (not= "tempfile" (:bucket mdata)))
                  (let [result (get-database-object-by-hash connectable backend
                                                            (:bucket mdata)
                                                            (:hash mdata))]
@@ -164,9 +169,6 @@
      backend
      (:metadata result))))
 
-(def ^:private sql:retrieve-storage-object
-  "select * from storage_object where id = ? and (deleted_at is null or deleted_at > now())")
-
 (defn row->storage-object [res]
   (let [mdata (or (some-> (:metadata res) (db/decode-transit-pgobject)) {})]
     (impl/storage-object
@@ -178,9 +180,15 @@
      (keyword (:backend res))
      mdata)))
 
-(defn- retrieve-database-object
+(def ^:private sql:get-storage-object
+  "SELECT *
+     FROM storage_object
+    WHERE id = ?
+      AND (deleted_at IS NULL)")
+
+(defn- get-database-object
   [conn id]
-  (some-> (db/exec-one! conn [sql:retrieve-storage-object id])
+  (some-> (db/exec-one! conn [sql:get-storage-object id])
           (row->storage-object)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -203,7 +211,7 @@
 (defn get-object
   [{:keys [::db/connectable] :as storage}  id]
   (assert (valid-storage? storage))
-  (retrieve-database-object connectable id))
+  (get-database-object connectable id))
 
 (defn put-object!
   "Creates a new object with the provided content."

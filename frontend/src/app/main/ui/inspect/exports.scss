@@ -2,12 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@import "refactor/common-refactor.scss";
+@use "refactor/common-refactor.scss" as deprecated;
 
 .element-set {
-  padding-bottom: $s-16;
+  padding-bottom: deprecated.$s-16;
   margin: 0;
 }
 
@@ -18,48 +18,56 @@
 .title-spacing-export-viewer {
   margin: 0;
   color: var(--entry-foreground-color-hover);
-  margin-inline-start: calc(-1 * $s-8);
-  width: calc(100% + $s-8);
+  margin-inline-start: calc(-1 * deprecated.$s-8);
+  width: calc(100% + deprecated.$s-8);
 }
 
 .add-export {
-  @extend .button-tertiary;
-  height: $s-32;
-  width: $s-28;
+  @extend %button-tertiary;
+
+  height: deprecated.$s-32;
+  width: deprecated.$s-28;
+
   svg {
-    @extend .button-icon;
+    @extend %button-icon;
+
     stroke: var(--icon-foreground);
   }
 }
 
 .element-set-content {
-  @include flexColumn;
-  margin-bottom: $s-4;
+  @include deprecated.flex-column;
+
+  margin-bottom: deprecated.$s-4;
 }
 
 .multiple-exports {
-  @include flexRow;
+  @include deprecated.flex-row;
+
   grid-column: 1 / span 9;
 }
 
 .label {
-  @extend .mixed-bar;
+  @extend %mixed-bar;
 }
 
 .actions {
-  @include flexRow;
+  @include deprecated.flex-row;
 }
 
 .element-group {
   display: grid;
   grid-template-columns: repeat(9, 1fr);
-  column-gap: $s-4;
+  column-gap: deprecated.$s-4;
+
   .action-btn {
-    @extend .button-tertiary;
-    height: $s-32;
-    width: $s-28;
+    @extend %button-tertiary;
+
+    height: deprecated.$s-32;
+    width: deprecated.$s-28;
+
     svg {
-      @extend .button-icon;
+      @extend %button-icon;
     }
   }
 }
@@ -75,8 +83,8 @@
   padding: 0;
 
   .dropdown-upwards {
-    bottom: $s-36;
-    width: $s-80;
+    bottom: deprecated.$s-36;
+    width: deprecated.$s-80;
     top: unset;
   }
 }
@@ -84,22 +92,25 @@
 .size-select {
   grid-column: span 2;
   padding: 0;
+
   .dropdown-upwards {
-    bottom: $s-36;
+    bottom: deprecated.$s-36;
     top: unset;
-    width: $s-80;
+    width: deprecated.$s-80;
   }
 }
 
 .suffix-input {
-  @extend .input-element;
-  @include bodySmallTypography;
+  @extend %input-element;
+  @include deprecated.body-small-typography;
+
   grid-column: span 3;
 }
 
 .export-btn {
-  @extend .button-secondary;
-  @include uppercaseTitleTipography;
-  height: $s-32;
+  @extend %button-secondary;
+  @include deprecated.uppercase-title-typography;
+
+  height: deprecated.$s-32;
   width: 100%;
 }

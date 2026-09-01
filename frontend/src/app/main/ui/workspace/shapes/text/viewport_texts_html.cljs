@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.workspace.shapes.text.viewport-texts-html
   (:require
@@ -16,7 +16,6 @@
    [app.common.types.modifiers :as ctm]
    [app.common.types.text :as txt]
    [app.common.uuid :as uuid]
-   [app.main.data.workspace.modifiers :as mdwm]
    [app.main.data.workspace.texts :as dwt]
    [app.main.fonts :as fonts]
    [app.main.refs :as refs]
@@ -36,15 +35,14 @@
   (if-let [modifiers (:modifiers shape)]
     (let [shape' (gsh/transform-shape shape modifiers)
 
-          old-sr (dm/get-prop shape :selrect)
-          new-sr (dm/get-prop shape' :selrect)
+          old-sr (ctm/safe-size-rect shape)
+          new-sr (ctm/safe-size-rect shape')
 
           ;; We need to remove the movement because the dynamic modifiers will have move it
           deltav (gpt/to-vec (gpt/point new-sr)
                              (gpt/point old-sr))]
       (-> shape
           (gsh/transform-shape (ctm/move modifiers deltav))
-          (mdwm/update-grow-type shape)
           (dissoc :modifiers)))
     shape))
 
@@ -132,10 +130,10 @@
            (when (some? node)
              (on-update shape node))))]
 
-    [:& html/text-shape {:key (str "shape-" (:id shape))
-                         :ref handle-update
-                         :shape shape
-                         :grow-type (:grow-type shape)}]))
+    [:> html/text-shape* {:key (str "shape-" (:id shape))
+                          :ref handle-update
+                          :shape shape
+                          :grow-type (:grow-type shape)}]))
 
 (defn text-properties-equal?
   [shape other]

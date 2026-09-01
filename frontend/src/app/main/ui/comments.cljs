@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.comments
   (:require-macros [app.main.style :as stl])
@@ -25,9 +25,9 @@
    [app.main.ui.components.dropdown :refer [dropdown]]
    [app.main.ui.ds.buttons.button :refer [button*]]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
-   [app.main.ui.ds.foundations.assets.icon :refer [icon*]]
+   [app.main.ui.ds.foundations.assets.icon :refer [icon*] :as i]
    [app.main.ui.hooks :as h]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.keyboard :as kbd]
@@ -45,20 +45,34 @@
 (def mentions-context (mf/create-context nil))
 (def r-mentions-split #"@\[[^\]]*\]\([^\)]*\)")
 (def r-mentions #"@\[([^\]]*)\]\(([^\)]*)\)")
+(def r-url-split #"https?://[^\s\)\]]+[^\s\)\]\.,;:!?]")
 (def zero-width-space \u200B)
 
-(defn- parse-comment
-  "Parse a comment into its elements (texts and mentions)"
-  [comment]
-  (d/interleave-all
-   (->> (str/split comment r-mentions-split)
-        (map #(hash-map :type :text :content %)))
+(defn- parse-urls
+  "Split a text element into text and url sub-elements"
+  [element]
+  (if (= (:type element) :text)
+    (let [text (:content element)
+          parts (str/split text r-url-split)
+          urls (re-seq r-url-split text)]
+      (d/interleave-all
+       (map #(hash-map :type :text :content %) parts)
+       (map #(hash-map :type :url :content %) urls)))
+    [element]))
 
-   (->> (re-seq r-mentions comment)
-        (map (fn [[_ user id]]
-               {:type :mention
-                :content user
-                :data {:id id}})))))
+(defn- parse-comment
+  "Parse a comment into its elements (texts, mentions and urls)"
+  [comment]
+  (->> (d/interleave-all
+        (->> (str/split comment r-mentions-split)
+             (map #(hash-map :type :text :content %)))
+
+        (->> (re-seq r-mentions comment)
+             (map (fn [[_ user id]]
+                    {:type :mention
+                     :content user
+                     :data {:id id}}))))
+       (mapcat parse-urls)))
 
 (defn- parse-nodes
   "Parse the nodes to format a comment"
@@ -81,7 +95,7 @@
   ([text]
    (-> (dom/create-element "span")
        (dom/set-data! "type" "text")
-       (dom/set-html! (if (empty? text) zero-width-space text)))))
+       (dom/set-html! (if (empty? text) zero-width-space (dom/escape-html text))))))
 
 (defn- create-mention-node
   "Creates a mention node"
@@ -146,7 +160,13 @@
   [{:keys [content]}]
   (let [comment-elements (mf/use-memo (mf/deps content) #(parse-comment content))]
     (for [[idx {:keys [type content]}] (d/enumerate comment-elements)]
-      (case type
+      (if (= type :url)
+        [:a {:key idx
+             :href content
+             :target "_blank"
+             :rel "noopener noreferrer"
+             :class (stl/css :comment-link)}
+         content]
         [:span
          {:key idx
           :class (stl/css-case
@@ -177,6 +197,7 @@
              (doseq [{:keys [type content data]} (parse-comment value)]
                (case type
                  :text     (dom/append-child! node (create-text-node content))
+                 :url      (dom/append-child! node (create-text-node content))
                  :mention  (dom/append-child! node (create-mention-node (:id data) content))
                  nil)))))
 
@@ -313,7 +334,7 @@
                      after-span (create-text-node (dm/str " " suffix))
                      sel (wapi/get-selection)]
 
-                 (dom/set-html! span-node (if (empty? prefix) zero-width-space prefix))
+                 (dom/set-html! span-node (if (empty? prefix) zero-width-space (dom/escape-html prefix)))
                  (dom/insert-after! node span-node mention-span)
                  (dom/insert-after! node mention-span after-span)
                  (wapi/set-cursor-after! after-span)
@@ -330,7 +351,7 @@
                (let [node-text (dom/get-text span-node)
                      at-symbol (if (blank-content? node-text) "@" " @")]
 
-                 (dom/set-html! span-node (str/concat node-text at-symbol))
+                 (dom/set-html! span-node (str/concat (dom/escape-html node-text) at-symbol))
                  (wapi/set-cursor-after! span-node))))))
 
         handle-key-down
@@ -378,7 +399,7 @@
 
                      (when span-node
                        (let [txt (.-textContent span-node)]
-                         (dom/set-html! span-node (dm/str (subs txt 0 offset) "\n" zero-width-space (subs txt offset)))
+                         (dom/set-html! span-node (dm/str (dom/escape-html (subs txt 0 offset)) "\n" zero-width-space (dom/escape-html (subs txt offset))))
                          (wapi/set-cursor! span-node (inc offset))
                          (handle-input)))))
 
@@ -541,8 +562,7 @@
             [:div {:class (stl/css :comments-mentions-email)} email]]))])))
 
 (mf/defc mentions-button*
-  {::mf/props :obj
-   ::mf/private true}
+  {::mf/private true}
   []
   (let [mentions-s        (mf/use-ctx mentions-context)
         display-mentions* (mf/use-state false)
@@ -583,7 +603,7 @@
       :on-key-down handle-key-down
       :icon-class (stl/css-case :open-mentions-button true
                                 :is-toggled @display-mentions*)
-      :icon "at"}]))
+      :icon i/at}]))
 
 (def ^:private schema:comment-avatar
   [:map
@@ -647,8 +667,7 @@
            [:span {:class (stl/css :replies-unread)} (str unread-replies " " (tr "labels.replies.new"))]))])]])
 
 (mf/defc comment-form-buttons*
-  {::mf/props :obj
-   ::mf/private true}
+  {::mf/private true}
   [{:keys [on-submit on-cancel is-disabled]}]
   (let [handle-cancel
         (mf/use-fn
@@ -666,11 +685,12 @@
 
     [:div {:class (stl/css :form-buttons-wrapper)}
      [:> mentions-button*]
-     [:> button* {:variant "ghost"
-                  :type "button"
-                  :on-key-down handle-cancel
-                  :on-click on-cancel}
-      (tr "ds.confirm-cancel")]
+     (when (some? on-cancel)
+       [:> button* {:variant "ghost"
+                    :type "button"
+                    :on-key-down handle-cancel
+                    :on-click on-cancel}
+        (tr "ds.confirm-cancel")])
      [:> button* {:variant "primary"
                   :type "button"
                   :on-key-down handle-submit
@@ -683,55 +703,41 @@
   (> (count content) 750))
 
 (mf/defc comment-reply-form*
-  {::mf/props :obj
-   ::mf/private true}
+  {::mf/private true}
   [{:keys [on-submit]}]
-  (let [show-buttons? (mf/use-state false)
-        content       (mf/use-state "")
+  (let [content       (mf/use-state "")
 
         disabled? (or (blank-content? @content)
                       (exceeds-length? @content))
 
-        on-focus
+        on-cancel
         (mf/use-fn
-         #(reset! show-buttons? true))
-
-        on-blur
-        (mf/use-fn
-         #(reset! show-buttons? false))
+         #(st/emit! :interrupt))
 
         on-change
         (mf/use-fn
          #(reset! content %))
-
-        on-cancel
-        (mf/use-fn
-         #(do (reset! content "")
-              (reset! show-buttons? false)))
 
         on-submit*
         (mf/use-fn
          (mf/deps @content)
          (fn []
            (on-submit @content)
-           (on-cancel)))]
+           (reset! content "")))]
 
     [:div {:class (stl/css :form)}
      [:> comment-input*
       {:value @content
        :placeholder (tr "labels.reply.thread")
        :autofocus true
-       :on-blur on-blur
-       :on-focus on-focus
        :on-ctrl-enter on-submit*
        :on-change on-change}]
      (when (exceeds-length? @content)
        [:div {:class (stl/css :error-text)}
         (tr "errors.character-limit-exceeded")])
-     (when (or @show-buttons? (seq @content))
-       [:> comment-form-buttons* {:on-submit on-submit*
-                                  :on-cancel on-cancel
-                                  :is-disabled disabled?}])]))
+     [:> comment-form-buttons* {:on-submit on-submit*
+                                :on-cancel on-cancel
+                                :is-disabled disabled?}]]))
 
 (mf/defc comment-edit-form*
   {::mf/private true}
@@ -774,7 +780,7 @@
         h (:height viewport)
 
         comment-width 284 ;; TODO: this is the width set via CSS in an outer container…
-                          ;; We should probably do this in a different way.
+        ;; We should probably do this in a different way.
 
         orientation-left? (>= (+ base-x comment-width (:x bubble-margin)) w)
         orientation-top?  (>= base-y (/ h 2))
@@ -917,12 +923,12 @@
                :title (tr "labels.comment.mark-as-solved")
                :on-click toggle-resolved}
          [:span {:class (stl/css-case :checkbox true
-                                      :global/checked (:is-resolved thread))} i/tick]])
+                                      :global/checked (:is-resolved thread))} deprecated-icon/tick]])
       (when (= (:id profile) (:id owner))
         [:> icon-button* {:variant "ghost"
                           :aria-label (tr "labels.options")
                           :on-click on-toggle-options
-                          :icon "menu"}])]
+                          :icon i/menu}])]
      [:& dropdown {:show (= options uuid/zero)
                    :on-close on-hide-options}
       [:ul {:class (stl/css :dropdown-menu)}
@@ -987,7 +993,7 @@
          [:> icon-button* {:variant "ghost"
                            :aria-label (tr "labels.options")
                            :on-click on-toggle-options
-                           :icon "menu"}])]
+                           :icon i/menu}])]
 
       [:div {:class (stl/css :item)}
        (if @edition?
@@ -1158,6 +1164,9 @@
 
         test-id     (str/join "-" (map :seqn (sort-by :seqn thread-group)))
 
+        ;; Click-through while transforming a shape, so it doesn't capture the drag
+        dragging?   (some? (mf/deref refs/current-transform))
+
         on-click
         (mf/use-fn
          (mf/deps thread-group position zoom)
@@ -1170,7 +1179,8 @@
                        (dwz/set-zoom position scale-zoom)))))]
 
     [:div {:style {:top (dm/str pos-y "px")
-                   :left (dm/str pos-x "px")}
+                   :left (dm/str pos-x "px")
+                   :pointer-events (when dragging? "none")}
            :on-click on-click
            :class (stl/css :floating-preview-wrapper :floating-preview-bubble)}
      [:> comment-avatar*
@@ -1191,6 +1201,9 @@
                        (gpt/transform position-modifier))
 
         frame-id     (:frame-id thread)
+
+        ;; Click-through while transforming a shape, so it doesn't capture the drag
+        dragging?    (some? (mf/deref refs/current-transform))
 
         state        (mf/use-state
                       #(do {:is-hover false
@@ -1284,7 +1297,8 @@
              (on-click thread))))]
 
     [:div {:style {:top (dm/str pos-y "px")
-                   :left (dm/str pos-x "px")}
+                   :left (dm/str pos-x "px")
+                   :pointer-events (when dragging? "none")}
            :on-pointer-down on-pointer-down
            :on-pointer-up on-pointer-up
            :on-pointer-move on-pointer-move
@@ -1368,7 +1382,7 @@
            :on-click on-click*}
      [:div {:class (stl/css :location)}
       [:div {:class (stl/css :location-icon)}
-       [:> icon* {:icon-id "comments"}]]
+       [:> icon* {:icon-id i/comments}]]
       [:div {:class (stl/css :location-text)}
        (str "#" (:seqn item))
        (str " " (:file-name item))

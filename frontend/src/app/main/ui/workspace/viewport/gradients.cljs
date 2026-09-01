@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.workspace.viewport.gradients
   "Gradients handlers and renders"
@@ -16,7 +16,6 @@
    [app.common.math :as mth]
    [app.common.types.color :as cc]
    [app.common.types.fills :as types.fills]
-   [app.config :as cfg]
    [app.main.data.workspace.colors :as dc]
    [app.main.features :as features]
    [app.main.refs :as refs]
@@ -44,7 +43,7 @@
 (def gradient-endpoint-radius-selected 6)
 (def gradient-endpoint-radius-handler 20)
 
-(mf/defc shadow [{:keys [id offset]}]
+(mf/defc shadow* [{:keys [id offset]}]
   [:filter {:id id
             :x "-10%"
             :y "-10%"
@@ -62,7 +61,7 @@
 
 (def checkerboard "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAIAAAC0tAIdAAACvUlEQVQoFQGyAk39AeLi4gAAAAAAAB0dHQAAAAAAAOPj4wAAAAAAAB0dHQAAAAAAAOPj4wAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////AAAAAAAA4+PjAAAAAAAAHR0dAAAAAAAA4+PjAAAAAAAAHR0dAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATj4+MAAAAAAAAdHR0AAAAAAADj4+MAAAAAAAAdHR0AAAAAAADj4+MAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAjScaa0cU7nIAAAAASUVORK5CYII=")
 
-(mf/defc gradient-color-handler
+(mf/defc gradient-color-handler*
   [{:keys [zoom point color angle selected index
            on-click on-pointer-down on-pointer-up on-pointer-move on-lost-pointer-capture]}]
   [:g {:filter "url(#gradient-drop-shadow)"
@@ -119,7 +118,7 @@
              :r (/ 2 zoom)
              :fill "var(--app-white)"}]])
 
-(mf/defc gradient-handler-transformed
+(mf/defc gradient-handler-transformed*
   [{:keys [from-p
            to-p
            width-p
@@ -134,8 +133,8 @@
 
         handler-state (mf/use-state {:display? false :offset 0 :hover nil})
 
-        cap-stops? (or (features/use-feature "render-wasm/v1") (contains? cfg/flags :frontend-binary-fills))
-        can-add-stop? (if cap-stops? (< (count stops) types.fills/MAX-GRADIENT-STOPS) true)
+        render-wasm?  (features/use-feature "render-wasm/v1")
+        can-add-stop? (if render-wasm? (< (count stops) types.fills/MAX-GRADIENT-STOPS) true)
 
         endpoint-on-pointer-down
         (fn [position event]
@@ -190,6 +189,7 @@
                    lv (-> (gpt/to-vec from-p to-p) (gpt/unit))
                    nv (gpt/normal-left lv)
                    offset (-> (gsp/project-t position [from-p to-p] nv)
+                              (mth/clamp 0 1)
                               (mth/precision 2))
                    new-stop (cc/interpolate-gradient stops offset)
                    stops (conj stops new-stop)
@@ -271,7 +271,7 @@
 
     [:g.gradient-handlers {:pointer-events "none"}
      [:defs
-      [:& shadow {:id "gradient-drop-shadow" :offset (/ 2 zoom)}]]
+      [:> shadow* {:id "gradient-drop-shadow" :offset (/ 2 zoom)}]]
 
      (let [lv (-> (gpt/to-vec from-p to-p)
                   (gpt/unit))
@@ -426,7 +426,7 @@
               (-> (gpt/to-vec from-p to-p)
                   (gpt/scale (:offset stop))))]
 
-         [:& gradient-color-handler
+         [:> gradient-color-handler*
           {:key index
            :selected (= editing index)
            :zoom zoom
@@ -449,7 +449,6 @@
                    :fill "var(--app-white)"}]))]))
 
 (mf/defc gradient-handlers-impl*
-  {::mf/props :obj}
   [{:keys [zoom stops gradient editing shape]}]
   (let [transform         (gsh/transform-matrix shape)
         transform-inverse (gsh/inverse-transform-matrix shape)
@@ -506,7 +505,7 @@
              (when (and norm-dist (d/num? norm-dist))
                (change! {:width norm-dist})))))]
 
-    [:& gradient-handler-transformed
+    [:> gradient-handler-transformed*
      {:editing editing
       :from-p from-p
       :to-p to-p
@@ -518,15 +517,14 @@
       :on-change-width on-change-width}]))
 
 (mf/defc gradient-handlers*
-  {::mf/wrap [mf/memo]
-   ::mf/props :obj}
+  {::mf/wrap [mf/memo]}
   [{:keys [id zoom]}]
   (let [shape-ref    (mf/use-memo (mf/deps id) #(refs/object-by-id id))
         shape        (mf/deref shape-ref)
         state        (mf/deref refs/colorpicker)
         gradient     (:gradient state)
-        cap-stops?   (or (features/use-feature "render-wasm/v1") (contains? cfg/flags :frontend-binary-fills))
-        stops        (if cap-stops?
+        render-wasm? (features/use-feature "render-wasm/v1")
+        stops        (if render-wasm?
                        (vec (take types.fills/MAX-GRADIENT-STOPS (:stops state)))
                        (:stops state))
         editing-stop (:editing-stop state)]

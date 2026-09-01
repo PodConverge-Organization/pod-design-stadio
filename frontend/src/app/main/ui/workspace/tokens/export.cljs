@@ -2,13 +2,14 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.workspace.tokens.export
   (:require-macros [app.main.style :as stl])
   (:require
    [app.main.data.modal :as modal]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
+   [app.main.ui.ds.foundations.assets.icon :as i]
    [app.main.ui.workspace.tokens.export.modal :refer [export-modal-body*]]
    [app.util.i18n :refer [tr]]
    [rumext.v2 :as mf]))
@@ -23,5 +24,5 @@
                       :on-click modal/hide!
                       :aria-label (tr "labels.close")
                       :variant "ghost"
-                      :icon "close"}]
+                      :icon i/close}]
     [:> export-modal-body*]]])

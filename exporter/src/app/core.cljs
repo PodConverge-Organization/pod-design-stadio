@@ -2,11 +2,11 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.core
   (:require
-   ["process" :as proc]
+   ["node:process" :as proc]
    [app.browser :as bwr]
    [app.common.logging :as l]
    [app.config :as cf]
@@ -21,6 +21,7 @@
   [& _]
   (l/info :msg "initializing"
           :public-uri (str (cf/get :public-uri))
+          :internal-uri (str (cf/get-internal-uri))
           :version (:full cf/version))
   (p/do!
    (bwr/init)
@@ -41,9 +42,9 @@
    (http/stop)
    (done)))
 
-(proc/on "uncaughtException"
-         (fn [cause]
-           (js/console.error cause)))
+(.on proc/default "uncaughtException"
+     (fn [cause]
+       (js/console.error cause)))
 
-(proc/on "SIGTERM" (fn [] (proc/exit 0)))
-(proc/on "SIGINT" (fn [] (proc/exit 0)))
+(.on proc/default "SIGTERM" (fn [] (proc/exit 0)))
+(.on proc/default "SIGINT" (fn [] (proc/exit 0)))

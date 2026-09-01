@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.types.shape.interactions
   (:require
@@ -13,14 +13,15 @@
    [app.common.schema :as sm]
    [app.common.schema.generators :as sg]))
 
-;; WARNING: options are not deleted when changing event or action type, so it can be
-;;          restored if the user changes it back later.
+;; WARNING: options are not deleted when changing event or action
+;; type, so it can be restored if the user changes it back later.
 ;;
-;;          But that means that an interaction may have for example a delay or
-;;          destination, even if its type does not require it (but a previous type did).
+;; But that means that an interaction may have for example a delay or
+;; destination, even if its type does not require it (but a previous
+;; type did).
 ;;
-;;          So make sure to use has-delay/has-destination... functions, or similar,
-;;          before reading them.
+;; So make sure to use has-delay/has-destination... functions, or
+;; similar, before reading them.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; SCHEMA
@@ -109,8 +110,8 @@
 (def check-animation!
   (sm/check-fn schema:animation))
 
-(def schema:interaction-attrs
-  [:map {:title "InteractionAttrs"}
+(def schema:generic-interaction-attrs
+  [:map {:title "GenericInteractionAttrs"}
    [:action-type {:optional true} [::sm/one-of action-types]]
    [:event-type {:optional true} [::sm/one-of event-types]]
    [:destination {:optional true} [:maybe ::sm/uuid]]
@@ -124,7 +125,7 @@
    [:url {:optional true} :string]])
 
 (def schema:navigate-interaction
-  [:map
+  [:map {:title "NavigateInteraction"}
    [:action-type [:= :navigate]]
    [:event-type [::sm/one-of event-types]]
    [:destination {:optional true} [:maybe ::sm/uuid]]
@@ -132,11 +133,11 @@
    [:animation {:optional true} schema:animation]])
 
 (def schema:open-overlay-interaction
-  [:map
+  [:map {:title "OpenOverlayInteraction"}
    [:action-type [:= :open-overlay]]
    [:event-type [::sm/one-of event-types]]
-   [:overlay-position ::gpt/point]
-   [:overlay-pos-type [::sm/one-of overlay-positioning-types]]
+   [:overlay-position {:optional true} ::gpt/point]
+   [:overlay-pos-type {:optional true} [::sm/one-of overlay-positioning-types]]
    [:destination {:optional true} [:maybe ::sm/uuid]]
    [:close-click-outside {:optional true} :boolean]
    [:background-overlay {:optional true} :boolean]
@@ -144,11 +145,11 @@
    [:position-relative-to {:optional true} [:maybe ::sm/uuid]]])
 
 (def schema:toggle-overlay-interaction
-  [:map
+  [:map {:title "ToggleOverlayInteraction"}
    [:action-type [:= :toggle-overlay]]
    [:event-type [::sm/one-of event-types]]
-   [:overlay-position ::gpt/point]
-   [:overlay-pos-type [::sm/one-of overlay-positioning-types]]
+   [:overlay-position {:optional true} ::gpt/point]
+   [:overlay-pos-type {:optional true} [::sm/one-of overlay-positioning-types]]
    [:destination {:optional true} [:maybe ::sm/uuid]]
    [:close-click-outside {:optional true} :boolean]
    [:background-overlay {:optional true} :boolean]
@@ -156,7 +157,7 @@
    [:position-relative-to {:optional true} [:maybe ::sm/uuid]]])
 
 (def schema:close-overlay-interaction
-  [:map
+  [:map {:title "CloseOverlayInteraction"}
    [:action-type [:= :close-overlay]]
    [:event-type [::sm/one-of event-types]]
    [:destination {:optional true} [:maybe ::sm/uuid]]
@@ -164,34 +165,33 @@
    [:position-relative-to {:optional true} [:maybe ::sm/uuid]]])
 
 (def schema:prev-scren-interaction
-  [:map
+  [:map {:title "PrevScreenInteraction"}
    [:action-type [:= :prev-screen]]
    [:event-type [::sm/one-of event-types]]])
 
 (def schema:open-url-interaction
-  [:map
+  [:map {:title "OpenUrlInteraction"}
    [:action-type [:= :open-url]]
    [:event-type [::sm/one-of event-types]]
    [:url :string]])
 
 (def schema:interaction
-  [:and {:title "Interaction"
-         :gen/gen (sg/one-of (sg/generator schema:navigate-interaction)
-                             (sg/generator schema:open-overlay-interaction)
-                             (sg/generator schema:close-overlay-interaction)
-                             (sg/generator schema:toggle-overlay-interaction)
-                             (sg/generator schema:prev-scren-interaction)
-                             (sg/generator schema:open-url-interaction))}
-   schema:interaction-attrs
-   [:multi {:dispatch :action-type}
-    [:navigate schema:navigate-interaction]
-    [:open-overlay schema:open-overlay-interaction]
-    [:toggle-overlay schema:toggle-overlay-interaction]
-    [:close-overlay schema:close-overlay-interaction]
-    [:prev-screen schema:prev-scren-interaction]
-    [:open-url schema:open-url-interaction]]])
-
-(sm/register! ::interaction schema:interaction)
+  [:schema {:title "Interaction"
+            :gen/gen (sg/one-of (sg/generator schema:navigate-interaction)
+                                (sg/generator schema:open-overlay-interaction)
+                                (sg/generator schema:close-overlay-interaction)
+                                (sg/generator schema:toggle-overlay-interaction)
+                                (sg/generator schema:prev-scren-interaction)
+                                (sg/generator schema:open-url-interaction))}
+   [:and
+    schema:generic-interaction-attrs
+    [:multi {:dispatch :action-type :title "InteractionAttrs"}
+     [:navigate schema:navigate-interaction]
+     [:open-overlay schema:open-overlay-interaction]
+     [:toggle-overlay schema:toggle-overlay-interaction]
+     [:close-overlay schema:close-overlay-interaction]
+     [:prev-screen schema:prev-scren-interaction]
+     [:open-url schema:open-url-interaction]]]])
 
 (def check-interaction
   (sm/check-fn schema:interaction))
@@ -453,16 +453,15 @@
     (gpt/point 0 0)))
 
 (defn calc-overlay-position
-  [interaction         ;; interaction data
-   shape               ;; Shape with the interaction
-   objects             ;; the objects tree
-   relative-to-shape   ;; the interaction position is realtive to this
-                       ;; sape
-   base-frame          ;; the base frame of the current interaction
-   dest-frame          ;; the frame to display with this interaction
-   frame-offset]       ;; if this interaction starts in a frame opened
-                       ;; on another interaction, this is the position
-                       ;; of that frame
+  [interaction         ; interaction data
+   shape               ; Shape with the interaction
+   objects             ; the objects tree
+   relative-to-shape   ; the interaction position is realtive to this shape
+   base-frame          ; the base frame of the current interaction
+   dest-frame          ; the frame to display with this interaction
+   frame-offset]       ; if this interaction starts in a frame opened
+                       ; on another interaction, this is the position
+                       ; of that frame
   (assert (check-interaction interaction))
   (assert (has-overlay-opts interaction)
           "expected compatible interaction map")

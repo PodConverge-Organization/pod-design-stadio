@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.binfile.v2
   "A sqlite3 based binary file exportation with support for exportation
@@ -153,7 +153,7 @@
 
 (defn- write-file!
   [cfg file-id]
-  (let [file   (bfc/get-file cfg file-id)
+  (let [file   (bfc/get-file cfg file-id :realize? true)
         thumbs (bfc/get-file-object-thumbnails cfg file-id)
         media  (bfc/get-file-media cfg file)
         rels   (bfc/get-files-rels cfg #{file-id})]
@@ -314,10 +314,10 @@
   (doseq [rel (read-obj cfg :file-rels file-id)]
     (let [rel (-> rel
                   (update :file-id bfc/lookup-index)
-                  (update :library-file-id bfc/lookup-index)
-                  (assoc :synced-at timestamp))]
+                  (update :library-file-id bfc/lookup-index))]
       (db/insert! conn :file-library-rel rel
-                  ::db/return-keys false)))
+                  ::db/return-keys false)
+      (bfc/upsert-file-library-sync! conn (assoc rel :synced-at timestamp))))
 
   (doseq [media (read-seq cfg :file-media-object file-id)]
     (let [media (-> media

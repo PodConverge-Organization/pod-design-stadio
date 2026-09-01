@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.types.color
   (:refer-clojure :exclude [test])
@@ -60,16 +60,17 @@
    {:type ::hex-color
     :pred hex-color-string?
     :type-properties
-    {:title "hex-color"
+    {:title "HexColor"
      :description "HEX Color String"
      :error/message "expected a valid HEX color"
      :error/code "errors.invalid-hex-color"
      :gen/gen hex-color-generator
-     ::oapi/type "integer"
-     ::oapi/format "int64"}}))
+     ::oapi/type "string"
+     ::oapi/format "rgb"}}))
 
 (def schema:plain-color
-  [:map [:color schema:hex-color]])
+  [:map {:title "PlainColorAttrs"}
+   [:color schema:hex-color]])
 
 (def schema:image
   [:map {:title "ImageColor" :closed true}
@@ -85,7 +86,8 @@
   (sm/keys schema:image))
 
 (def schema:image-color
-  [:map [:image schema:image]])
+  [:map {:title "ImageColorAttrs"}
+   [:image schema:image]])
 
 (def gradient-types
   #{:linear :radial})
@@ -110,10 +112,11 @@
   (sm/keys schema:gradient))
 
 (def schema:gradient-color
-  [:map [:gradient schema:gradient]])
+  [:map {:title "GradientColorAttrs"}
+   [:gradient schema:gradient]])
 
 (def schema:color-attrs
-  [:map {:title "ColorAttrs" :closed true}
+  [:map {:title "GenericColorAttrs" :closed true}
    [:opacity {:optional true} [::sm/number {:min 0 :max 1}]]
    [:ref-id {:optional true} ::sm/uuid]
    [:ref-file {:optional true} ::sm/uuid]])
@@ -132,13 +135,13 @@
   (into required-color-attrs (sm/keys schema:color-attrs)))
 
 (def schema:library-color-attrs
-  [:map {:title "ColorAttrs" :closed true}
+  [:map {:title "LibraryColorAttrs" :closed true}
    [:id ::sm/uuid]
    [:name ::sm/text]
    [:path {:optional true} :string]
    [:opacity {:optional true} [::sm/number {:min 0 :max 1}]]
    [:modified-at {:optional true} ::ct/inst]
-   [:plugin-data {:optional true} ::ctpg/plugin-data]])
+   [:plugin-data {:optional true} ctpg/schema:plugin-data]])
 
 (def schema:library-color
   "Used for in-transit representation of a color (per example when user
@@ -189,6 +192,9 @@
 (def ^:const background-quaternary "#2e3434")
 (def ^:const background-quaternary-light "#eef0f2")
 (def ^:const canvas "#E8E9EA")
+(def ^:const default-pixel-grid-color "#0070E4")
+
+(def ^:const default-pixel-grid-opacity 0.2)
 
 (def names
   {"aliceblue" "#f0f8ff"
@@ -607,6 +613,36 @@
   [hsv]
   (-> hsv hsv->hex hex->hsl))
 
+;; HSB (Hue, Saturation, Brightness) — same color model as HSV but with
+;; the brightness component normalized to a 0-100 range, matching Figma,
+;; Sketch, and Adobe XD conventions. Internally we reuse the HSV math and
+;; only rescale the brightness axis.
+
+(defn rgb->hsb
+  [rgb]
+  (let [[h s v] (rgb->hsv rgb)]
+    [h s (* (/ v 255.0) 100.0)]))
+
+(defn hsb->rgb
+  [[h s b]]
+  (hsv->rgb [h s (int (* (/ b 100.0) 255.0))]))
+
+(defn hex->hsb
+  [v]
+  (-> v hex->rgb rgb->hsb))
+
+(defn hsb->hex
+  [hsb]
+  (-> hsb hsb->rgb rgb->hex))
+
+(defn hsv->hsb
+  [[h s v]]
+  [h s (* (/ v 255.0) 100.0)])
+
+(defn hsb->hsv
+  [[h s b]]
+  [h s (int (* (/ b 100.0) 255.0))])
+
 (defn expand-hex
   [v]
   (cond
@@ -717,8 +753,10 @@
 
 (defn- offset-spread
   [from to num]
-  (->> (range 0 num)
-       (map #(mth/precision (+ from (* (/ (- to from) (dec num)) %)) 2))))
+  (if (<= num 1)
+    [from]
+    (->> (range 0 num)
+         (map #(mth/precision (+ from (* (/ (- to from) (dec num)) %)) 2)))))
 
 (defn uniform-spread?
   "Checks if the gradient stops are spread uniformly"
@@ -747,6 +785,9 @@
 (defn interpolate-gradient
   [stops offset]
   (let [idx   (d/index-of-pred stops #(<= offset (:offset %)))
-        start (if (= idx 0) (first stops) (get stops (dec idx)))
+        start (cond
+                (nil? idx) (last stops)
+                (= idx 0)  (first stops)
+                :else      (get stops (dec idx)))
         end   (if (nil? idx) (last stops) (get stops idx))]
     (interpolate-color start end offset)))

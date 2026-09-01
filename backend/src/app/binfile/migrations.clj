@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.binfile.migrations
   "A binfile related migrations handling"
@@ -34,11 +34,6 @@
       nil
 
       "fdata/shape-data-type"
-      nil
-
-      ;; There is no migration needed, but we don't want to allow
-      ;; copy paste nor import of variant files into no-variant teams
-      "variants/v1"
       nil
 
       (ex/raise :type :internal

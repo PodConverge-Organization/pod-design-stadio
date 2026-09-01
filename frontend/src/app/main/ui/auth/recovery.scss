@@ -2,11 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@use "common/refactor/common-refactor.scss" as *;
-@use "./common.scss";
+@use "refactor/common-refactor.scss" as deprecated;
+@use "./common";
 
 .submit-btn {
-  margin-top: $s-16;
+  margin-top: deprecated.$s-16;
 }

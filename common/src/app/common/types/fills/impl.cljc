@@ -2,12 +2,12 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.types.fills.impl
   (:require
    #?(:clj [clojure.data.json :as json])
-   #?(:cljs [app.common.weak-map :as weak-map])
+   #?(:cljs [app.common.weak :as weak])
    [app.common.buffer :as buf]
    [app.common.data :as d]
    [app.common.data.macros :as dm]
@@ -301,11 +301,17 @@
 
      IHeapWritable
      (-get-byte-size [_]
-       (- (.-byteLength dbuffer) 4))
+       ;; Include the 4-byte header with the fill count
+       (+ 4 (* size FILL-U8-SIZE)))
 
      (-write-to [_ heap offset]
-       (let [buffer' (.-buffer ^js/DataView dbuffer)]
-         (.set heap (js/Uint32Array. buffer' 4) offset)))
+       (let [buffer' (.-buffer ^js/DataView dbuffer)
+             ;; Calculate byte size: 4 bytes header + (size * FILL-U8-SIZE)
+             byte-size (+ 4 (* size FILL-U8-SIZE))
+             ;; Create Uint32Array with exact size needed (convert bytes to u32 elements)
+             u32-array (js/Uint32Array. buffer' 0 (/ byte-size 4))]
+         ;; Copy from offset 0 to include the header with fill count
+         (.set heap u32-array offset)))
 
      IBinaryFills
      (-get-image-ids [_]
@@ -374,7 +380,7 @@
          nil))
 
      (-nth [_ i default]
-       (if (d/in-range? i size)
+       (if (d/in-range? size i)
          (read-fill dbuffer mbuffer i)
          default))
 
@@ -443,7 +449,7 @@
                           :code :invalid-fill
                           :hint "found invalid fill on encoding fills to binary format")))))
 
-        #?(:cljs (Fills. total dbuffer mbuffer image-ids (weak-map/create) nil)
+        #?(:cljs (Fills. total dbuffer mbuffer image-ids (weak/weak-value-map) nil)
            :clj  (Fills. total dbuffer mbuffer nil))))))
 
 (defn fills?

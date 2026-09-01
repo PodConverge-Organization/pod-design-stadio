@@ -2,12 +2,12 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.srepl.cli
   "PREPL API for external usage (CLI or ADMIN)"
   (:require
-   [app.auth :as auth]
+   [app.auth :refer [derive-password]]
    [app.common.exceptions :as ex]
    [app.common.schema :as sm]
    [app.common.schema.generators :as sg]
@@ -29,7 +29,7 @@
 
 (defn- get-current-system
   []
-  (or (deref (requiring-resolve 'app.main/system))
+  (or (deref (requiring-resolve 'app.system/system))
       (deref (requiring-resolve 'user/system))))
 
 (defmulti ^:private exec-command ::cmd)
@@ -53,16 +53,16 @@
     :or {is-active true}}]
   (some-> (get-current-system)
           (db/tx-run!
-           (fn [{:keys [::db/conn] :as system}]
-             (let [password (cmd.profile/derive-password system password)
+           (fn [system]
+             (let [password (derive-password password)
                    params   {:id (uuid/next)
                              :email email
                              :fullname fullname
                              :is-active is-active
                              :password password
                              :props {}}]
-               (->> (cmd.auth/create-profile! conn params)
-                    (cmd.auth/create-profile-rels! conn)))))))
+               (->> (cmd.auth/create-profile system params)
+                    (cmd.auth/create-profile-rels system)))))))
 
 (defmethod exec-command "update-profile"
   [{:keys [fullname email password is-active]}]
@@ -74,7 +74,7 @@
                             (assoc :fullname fullname)
 
                             (some? password)
-                            (assoc :password (auth/derive-password password))
+                            (assoc :password (derive-password password))
 
                             (some? is-active)
                             (assoc :is-active is-active))]
@@ -124,13 +124,12 @@
 
 (defmethod exec-command "derive-password"
   [{:keys [password]}]
-  (auth/derive-password password))
+  (derive-password password))
 
 (defmethod exec-command "authenticate"
   [{:keys [token]}]
   (when-let [system (get-current-system)]
-    (let [props  (get system ::setup/props)]
-      (tokens/verify props {:token token :iss "authentication"}))))
+    (tokens/verify system {:token token :iss "authentication"})))
 
 (def ^:private schema:get-customer
   [:map [:id ::sm/uuid]])

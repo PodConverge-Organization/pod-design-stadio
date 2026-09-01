@@ -2,7 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
+
+@use "ds/_utils.scss" as *;
 
 @keyframes line-pencil {
   0% {
@@ -53,8 +55,8 @@
     // Tips container
     .tips-container {
       text-align: center;
-      min-width: var(--sp-600);
-      max-width: var(--sp-800);
+      min-width: px2rem(600);
+      max-width: px2rem(800);
       display: flex;
       flex-direction: column;
       gap: var(--sp-s);
@@ -85,7 +87,7 @@
 }
 
 .loader {
-  fill: currentColor;
+  fill: currentcolor;
   width: var(--icon-width);
   animation: fade-in-loader 0.5s ease-in-out;
 }

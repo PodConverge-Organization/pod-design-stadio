@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.util.text-editor
   "Draft related abstraction functions."
@@ -60,12 +60,14 @@
 
 (defn get-editor-block-data
   [block]
-  (-> (.getData ^js block)
-      (immutable-map->map)))
+  (when (some? block)
+    (-> (.getData ^js block)
+        (immutable-map->map))))
 
 (defn get-editor-block-type
   [block]
-  (.getType ^js block))
+  (when (some? block)
+    (.getType ^js block)))
 
 (defn get-editor-current-block-data
   [state]
@@ -101,8 +103,10 @@
               (impl/updateBlockData state block-key (clj->js attrs)))))
 
         state (impl/applyInlineStyle state (legacy.txt/attrs-to-styles attrs))
-        selected (impl/getSelectedBlocks state)]
-    (reduce update-blocks state selected)))
+        selection-after-apply (impl/getSelection state)
+        selected (impl/getSelectedBlocks state)
+        state (reduce update-blocks state selected)]
+    (impl/setSelection state selection-after-apply)))
 
 (defn update-editor-current-inline-styles-fn
   [state update-fn]

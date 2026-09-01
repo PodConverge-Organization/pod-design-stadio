@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.data.workspace.path.drawing
   (:require
@@ -13,13 +13,13 @@
    [app.common.types.container :as ctn]
    [app.common.types.path :as path]
    [app.common.types.path.helpers :as path.helpers]
-   [app.common.types.path.segment :as path.segment]
    [app.common.types.shape :as cts]
    [app.common.types.shape-tree :as ctst]
    [app.common.types.shape.layout :as ctl]
    [app.main.data.helpers :as dsh]
    [app.main.data.workspace.drawing.common :as dwdc]
    [app.main.data.workspace.edition :as dwe]
+   [app.main.data.workspace.pages :as-alias dwpg]
    [app.main.data.workspace.path.changes :as changes]
    [app.main.data.workspace.path.common :as common]
    [app.main.data.workspace.path.helpers :as helpers]
@@ -43,7 +43,7 @@
      (= type :app.main.data.workspace.path.shortcuts/esc-pressed)
      (= type :app.main.data.workspace.common/clear-edition-mode)
      (= type :app.main.data.workspace.edition/clear-edition-mode)
-     (= type :app.main.data.workspace/finalize-page)
+     (= type ::dwpg/finalize-page)
      (= event :interrupt) ;; ESC
      (and ^boolean (mse/mouse-event? event)
           ^boolean (mse/mouse-double-click-event? event)))))
@@ -58,12 +58,12 @@
             last-point (get-in state [:workspace-local :edit-path id :last-point])
             position   (cond-> (gpt/point x y)
                          fix-angle? (path.helpers/position-fixed-angle last-point))
-            shape      (st/get-path state)
+            content    (st/get-path state :content)
 
             {:keys [last-point prev-handler]}
             (get-in state [:workspace-local :edit-path id])
 
-            segment (path.segment/next-node shape position last-point prev-handler)]
+            segment (path/next-node content position last-point prev-handler)]
         (assoc-in state [:workspace-local :edit-path id :preview] segment)))))
 
 (defn add-node
@@ -98,7 +98,7 @@
              prefix (or prefix :c1)
              position (or position (path.helpers/segment->point (nth content (dec index))))
 
-             old-handler (path.segment/get-handler-point content index prefix)
+             old-handler (path/get-handler-point content index prefix)
 
              handler-position (cond-> (gpt/point x y)
                                 shift? (path.helpers/position-fixed-angle position))
@@ -147,7 +147,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [content  (st/get-path state :content)
-            handlers (-> (path.segment/get-handlers content)
+            handlers (-> (path/get-handlers content)
                          (get position))
 
             [idx prefix] (when (= (count handlers) 1)
@@ -286,7 +286,7 @@
                              (gpt/point))
 
             frame-id     (->> (ctst/top-nested-frame objects position)
-                              (ctn/get-first-not-copy-parent objects) ;; We don't want to change the structure of component copies
+                              (ctn/get-first-valid-parent objects) ;; We don't want to change the structure of component copies
                               :id)
             flex-layout? (ctl/flex-layout? objects frame-id)
             drop-index   (when flex-layout? (gsl/get-drop-index frame-id objects position))]
@@ -326,7 +326,7 @@
   (ptk/reify ::handle-new-shape
     ptk/UpdateEvent
     (update [_ state]
-      (let [shape (cts/setup-shape {:type :path :content (path/content nil)})]
+      (let [shape (cts/setup-shape {:type :path})]
         (update state :workspace-drawing assoc :object shape)))
 
     ptk/WatchEvent

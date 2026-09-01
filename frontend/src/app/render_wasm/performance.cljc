@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.render-wasm.performance
   #?(:cljs (:require-macros [app.render-wasm.performance]))
@@ -45,13 +45,13 @@
 
 (defmacro begin-measure
   [measure-name]
-  (when enabled?
+  (when (enabled?)
     (let [measure-name (str/concat measure-name "::begin")]
       `(.mark js/performance ~measure-name))))
 
 (defmacro end-measure
   [measure-name & [detail]]
-  (when enabled?
+  (when (enabled?)
     (let [begin-name (str/concat measure-name "::begin")
           end-name (str/concat measure-name "::end")
           detail `(cljs.core/js-obj ~@(mapcat (fn [[k v]] [(name k) v]) detail))
@@ -62,7 +62,7 @@
 (defmacro with-measure
   "Measures the time of a function call. This should only be called in synchronous functions"
   [[measure-name detail] body]
-  (if-not enabled?
+  (if-not (enabled?)
     body
     `(let [_# (begin-measure ~measure-name)
            result# ~body

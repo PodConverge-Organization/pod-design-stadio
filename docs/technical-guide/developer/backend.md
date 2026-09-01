@@ -1,5 +1,6 @@
 ---
 title: 3.06. Backend Guide
+desc: "Penpot Technical Guide: Backend basics - REPL setup, loading fixtures, database migrations, and clj-kondo linting to speed development workflows."
 ---
 
 # Backend guide #
@@ -117,3 +118,33 @@ cd penpot/backend;
 clj-kondo --lint src
 ```
 
+## PodConverge auth cookie domains ##
+
+PodConverge deployments can set `PENPOT_AUTH_TOKEN_COOKIE_DOMAIN` to configure
+the backend session cookie domain through `auth-token-cookie-domain`. When it is
+absent, Penpot keeps the upstream host-only cookie behavior.
+
+During the shared-domain migration, `PENPOT_AUTH_TOKEN_LEGACY_COOKIE_DOMAIN`
+configures `auth-token-legacy-cookie-domain`. The backend emits the legacy
+deletion `Set-Cookie` header only when both the canonical and legacy domains are
+configured, preserving existing `Set-Cookie` headers and appending the cleanup
+header last.
+
+Production uses:
+
+```text
+PENPOT_AUTH_TOKEN_COOKIE_DOMAIN=.podconverge.com
+PENPOT_AUTH_TOKEN_LEGACY_COOKIE_DOMAIN=design.podconverge.com
+```
+
+HTTP readiness and unit tests are not sufficient to prove this migration.
+Production browser smoke must verify existing authenticated session continuity,
+fresh login creates the canonical shared-domain cookie, no new Design
+Studio-only duplicate auth cookie is created, a pre-existing legacy Design
+Studio cookie is actually removed, and logout/login leaves no conflicting cookie
+state.
+
+A historical legacy cookie may be host-only. A deletion response carrying
+`Domain=design.podconverge.com` must be proven against a real browser. If the old
+host-only cookie survives, stop and investigate rather than manually deleting it
+to make the smoke test pass.

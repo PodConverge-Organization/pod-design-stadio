@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@import "refactor/common-refactor.scss";
+@use "refactor/common-refactor.scss" as deprecated;
 
 .cursor-grabbing {
   cursor: grabbing;
@@ -23,7 +23,8 @@
 }
 
 .error-text {
-  @include bodySmallTypography;
+  @include deprecated.body-small-typography;
+
   color: var(--color-foreground-error);
 }
 
@@ -31,7 +32,7 @@
   color: var(--comment-subtitle-color);
   display: flex;
   align-items: center;
-  gap: $s-6;
+  gap: deprecated.$s-6;
 }
 
 .location-icon {
@@ -39,14 +40,15 @@
 }
 
 .location-text {
-  @include textEllipsis;
+  @include deprecated.text-ellipsis;
 }
 
 .author {
-  @include bodySmallTypography;
+  @include deprecated.body-small-typography;
+
   display: flex;
   align-items: center;
-  gap: $s-8;
+  gap: deprecated.$s-8;
 }
 
 .author-identity {
@@ -54,56 +56,58 @@
 }
 
 .author-fullname {
-  @include textEllipsis;
+  @include deprecated.text-ellipsis;
+
   color: var(--comment-title-color);
 }
 
 .author-timeago {
-  @include textEllipsis;
+  @include deprecated.text-ellipsis;
+
   color: var(--comment-subtitle-color);
 }
 
 .avatar {
   position: relative;
-  height: $s-24;
-  width: $s-24;
-  border-radius: $br-circle;
+  height: deprecated.$s-24;
+  width: deprecated.$s-24;
+  border-radius: deprecated.$br-circle;
 }
 
 .avatar-lg {
-  height: $s-32;
-  width: $s-32;
+  height: deprecated.$s-32;
+  width: deprecated.$s-32;
 }
 
 .avatar-read {
-  border: $s-2 solid var(--color-background-tertiary);
+  border: deprecated.$s-2 solid var(--color-background-tertiary);
 }
 
 .avatar-unread {
-  border: $s-2 solid var(--color-accent-primary);
+  border: deprecated.$s-2 solid var(--color-accent-primary);
 }
 
 .avatar-solved {
-  border: $s-2 solid var(--color-background-tertiary);
+  border: deprecated.$s-2 solid var(--color-background-tertiary);
 }
 
 .avatar-image {
-  border-radius: $br-circle;
+  border-radius: deprecated.$br-circle;
 }
 
 .avatar-text {
-  border-radius: $br-circle;
+  border-radius: deprecated.$br-circle;
   height: 100%;
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: $fs-12;
+  font-size: deprecated.$fs-12;
   background-color: var(--color-background-quaternary);
 }
 
 .avatar-mask {
-  border-radius: $br-circle;
+  border-radius: deprecated.$br-circle;
   position: absolute;
   height: 100%;
   width: 100%;
@@ -112,48 +116,51 @@
 }
 
 .avatar-darken {
-  background: rgba(0, 0, 0, 0.5);
+  background: rgb(0 0 0 / 0.5);
 }
 
 .cover {
-  @include bodySmallTypography;
+  @include deprecated.body-small-typography;
+
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: $s-8;
-  padding: $s-20;
-  border-bottom: $s-1 solid var(--color-background-quaternary);
+  gap: deprecated.$s-8;
+  padding: deprecated.$s-20;
+  border-bottom: deprecated.$s-1 solid var(--color-background-quaternary);
 }
 
 .item {
-  @include bodySmallTypography;
+  @include deprecated.body-small-typography;
+
   color: var(--color-foreground-primary);
-  word-wrap: break-word;
   overflow-wrap: break-word;
   hyphens: auto;
   white-space: pre-wrap;
 }
 
 .replies {
-  @include bodySmallTypography;
+  @include deprecated.body-small-typography;
+
   display: flex;
-  gap: $s-8;
+  gap: deprecated.$s-8;
 }
 
 .replies-total {
   color: var(--color-foreground-secondary);
 }
+
 .replies-unread {
   color: var(--color-accent-primary);
 }
 
 .floating-preview-wrapper {
-  z-index: $z-index-1;
+  z-index: deprecated.$z-index-1;
   position: absolute;
   user-select: none;
   cursor: pointer;
   pointer-events: auto;
-  transform: translate(calc(-1 * $s-16), calc(-1 * $s-16));
+  transform: translate(calc(-1 * deprecated.$s-16), calc(-1 * deprecated.$s-16));
 }
 
 .floating-preview-bubble {
@@ -164,19 +171,22 @@
   position: absolute;
   display: flex;
   flex-direction: row;
-  column-gap: $s-12;
+  column-gap: deprecated.$s-12;
 
   --translate-x: 0%;
   --translate-y: 0%;
+
   transform: translate(var(--translate-x), var(--translate-y));
 
   &.left {
     --translate-x: -100%;
+
     flex-direction: row-reverse;
   }
 
   &.top {
     --translate-y: -100%;
+
     align-items: flex-end;
   }
 }
@@ -184,40 +194,43 @@
 .floating-thread-draft-inner-wrapper {
   display: flex;
   flex-direction: column;
-  gap: $s-12;
-  width: $s-284;
-  padding: $s-8 $s-12 $s-8 $s-12;
+  gap: deprecated.$s-12;
+  width: deprecated.$s-284;
+  padding: deprecated.$s-8 deprecated.$s-12 deprecated.$s-8 deprecated.$s-12;
   pointer-events: auto;
-  border-radius: $br-8;
-  border: $s-2 solid var(--modal-border-color);
+  border-radius: deprecated.$br-8;
+  border: deprecated.$s-2 solid var(--modal-border-color);
   background-color: var(--comment-modal-background-color);
   max-height: var(--comment-height);
 }
 
 .floating-preview-displacement {
-  margin-left: calc(-1 * ($s-12 + $s-2));
-  margin-top: calc(-1 * ($s-8 + $s-2));
+  margin-left: calc(-1 * (deprecated.$s-12 + deprecated.$s-2));
+  margin-top: calc(-1 * (deprecated.$s-8 + deprecated.$s-2));
 }
 
 .floating-thread-wrapper {
   position: absolute;
   display: flex;
   flex-direction: column;
-  gap: $s-12;
-  width: $s-284;
-  padding: $s-8 $s-12 $s-8 $s-12;
+  gap: deprecated.$s-12;
+  width: deprecated.$s-284;
+  padding: deprecated.$s-8 deprecated.$s-12 deprecated.$s-8 deprecated.$s-12;
   pointer-events: auto;
-  border-radius: $br-8;
-  border: $s-2 solid var(--modal-border-color);
+  border-radius: deprecated.$br-8;
+  border: deprecated.$s-2 solid var(--modal-border-color);
   background-color: var(--comment-modal-background-color);
   max-height: var(--comment-height);
 
   --translate-x: 0%;
   --translate-y: 0%;
+
   transform: translate(var(--translate-x), var(--translate-y));
+
   &.left {
     --translate-x: -100%;
   }
+
   &.top {
     --translate-y: -100%;
   }
@@ -228,11 +241,12 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  height: $s-32;
+  height: deprecated.$s-32;
 }
 
 .floating-thread-header-left {
-  @include bodySmallTypography;
+  @include deprecated.body-small-typography;
+
   color: var(--color-foreground-primary);
 }
 
@@ -244,9 +258,9 @@
 .floating-thread-main {
   display: flex;
   flex-direction: column;
-  gap: $s-16;
+  gap: deprecated.$s-16;
   overflow-y: auto;
-  padding-bottom: $s-16;
+  padding-bottom: deprecated.$s-16;
 }
 
 .floating-thread-item-wrapper {
@@ -256,48 +270,51 @@
 .floating-thread-item {
   display: flex;
   flex-direction: column;
-  gap: $s-8;
-  @include bodySmallTypography;
+  gap: deprecated.$s-8;
+
+  @include deprecated.body-small-typography;
 }
 
 .checkbox-wrapper {
-  @include flexCenter;
-  width: $s-16;
-  height: $s-24;
-  margin-right: $s-8;
+  @include deprecated.flex-center;
+
+  width: deprecated.$s-16;
+  height: deprecated.$s-24;
+  margin-right: deprecated.$s-8;
 }
 
 .checkbox {
-  @extend .checkbox-icon;
+  @extend %checkbox-icon;
 }
 
 .dropdown-menu {
-  @extend .dropdown-wrapper;
+  @extend %dropdown-wrapper;
+
   position: absolute;
   width: fit-content;
-  max-width: $s-200;
-  right: $s-32;
+  max-width: deprecated.$s-200;
+  right: deprecated.$s-32;
   top: 0;
   left: unset;
 }
 
 .dropdown-menu-option {
-  @extend .dropdown-element-base;
+  @extend %dropdown-element-base;
 }
 
 .form {
   display: flex;
   flex-direction: column;
-  gap: $s-8;
-  max-height: calc(var(--comment-height) - $s-132);
+  gap: deprecated.$s-8;
+  max-height: calc(var(--comment-height) - deprecated.$s-132);
 }
 
 .form-buttons-wrapper {
   display: grid;
   grid-template-columns: 1fr auto auto;
   justify-content: flex-end;
-  gap: $s-8;
-  margin-top: $s-8;
+  gap: deprecated.$s-8;
+  margin-top: deprecated.$s-8;
 }
 
 .open-mentions-button {
@@ -310,17 +327,17 @@
 
 .comments-mentions-choice {
   background: var(--color-background-tertiary);
-  border-radius: $s-8;
+  border-radius: deprecated.$s-8;
   border: none;
   display: flex;
   flex-direction: column;
-  left: calc(-1 * $s-2);
-  margin-top: $s-8;
+  left: calc(-1 * deprecated.$s-2);
+  margin-top: deprecated.$s-8;
   overflow: hidden;
-  padding: $s-2;
+  padding: deprecated.$s-2;
   position: absolute;
   top: 100%;
-  width: calc(100% + $s-4);
+  width: calc(100% + deprecated.$s-4);
 }
 
 .comments-mentions-entry {
@@ -329,12 +346,12 @@
   grid-template-areas:
     "avatar name"
     "avatar email";
-  grid-template-columns: $s-32 1fr;
-  column-gap: $s-8;
-  margin: $s-4 $s-8;
-  padding: 0 $s-4;
-  border-radius: $br-8;
-  border: $s-1 solid transparent;
+  grid-template-columns: deprecated.$s-32 1fr;
+  column-gap: deprecated.$s-8;
+  margin: deprecated.$s-4 deprecated.$s-8;
+  padding: 0 deprecated.$s-4;
+  border-radius: deprecated.$br-8;
+  border: deprecated.$s-1 solid transparent;
 
   &:hover {
     background: var(--color-background-quaternary);
@@ -347,13 +364,13 @@
 
   .comments-mentions-name {
     grid-area: name;
-    font-size: $fs-12;
+    font-size: deprecated.$fs-12;
     color: var(--color-foreground-primary);
   }
 
   .comments-mentions-email {
     grid-area: email;
-    font-size: $fs-12;
+    font-size: deprecated.$fs-12;
     color: var(--color-foreground-secondary);
   }
 
@@ -364,23 +381,23 @@
 }
 
 .comment-input {
-  @include bodySmallTypography;
-  white-space: pre-line;
+  @include deprecated.body-small-typography;
+
   background: var(--input-background-color);
-  border-radius: $br-8;
-  border: $s-1 solid var(--input-border-color);
+  border-radius: deprecated.$br-8;
+  border: deprecated.$s-1 solid var(--input-border-color);
   color: var(--input-foreground-color);
-  height: $s-36;
-  max-width: $s-260;
+  height: deprecated.$s-36;
+  max-width: deprecated.$s-260;
   overflow-y: auto;
-  padding: $s-8;
+  padding: deprecated.$s-8;
   resize: vertical;
   width: 100%;
   white-space: pre-wrap;
   overflow-wrap: break-word;
 
   &:focus {
-    border: $s-1 solid var(--input-border-color-active);
+    border: deprecated.$s-1 solid var(--input-border-color-active);
     outline: none;
   }
 
@@ -401,8 +418,14 @@
   color: var(--color-accent-primary);
 }
 
+.comment-link {
+  color: var(--color-accent-primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .comments-mentions-empty {
-  font-size: $fs-12;
+  font-size: deprecated.$fs-12;
   color: var(--color-foreground-secondary);
-  padding: $s-6 $s-8;
+  padding: deprecated.$s-6 deprecated.$s-8;
 }

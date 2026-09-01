@@ -2,12 +2,12 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.dashboard.inline-edition
   (:require-macros [app.main.style :as stl])
   (:require
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.util.dom :as dom]
    [app.util.keyboard :as kbd]
    [rumext.v2 :as mf]))
@@ -70,5 +70,5 @@
               :on-blur     on-blur
               :max-length  max-length}]
      [:span {:class (stl/css :close)
-             :on-click on-cancel} i/close]]))
+             :on-click on-cancel} deprecated-icon/close]]))
 

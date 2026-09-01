@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.render-wasm.mem
   (:require
@@ -61,17 +61,21 @@
   []
   (h/call wasm/internal-module "_free_bytes"))
 
+(defn read-string
+  "Read a UTF-8 string from WASM memory given a byte pointer/offset.
+   Uses Emscripten's UTF8ToString to decode the string."
+  ([ptr max-bytes ignore-null]
+   (h/call wasm/internal-module "UTF8ToString" ptr max-bytes ignore-null))
+  ([ptr max-bytes]
+   (h/call wasm/internal-module "UTF8ToString" ptr max-bytes))
+  ([ptr]
+   (h/call wasm/internal-module "UTF8ToString" ptr)))
+
 (defn slice
   "Returns a copy of a portion of a typed array into a new typed array
   object selected from start to end."
   [heap offset size]
   (.slice ^js heap offset (+ offset size)))
-
-(defn view
-  "Returns a new typed array on the same ArrayBuffer store and with the
-  same element types as for this typed array."
-  [heap offset size]
-  (.subarray ^js heap offset (+ offset size)))
 
 (defn get-data-view
   "Returns a heap wrapped in a DataView for surgical write operations"
@@ -80,10 +84,64 @@
 
 (defn write-u8
   "Write unsigned int8. Expects a DataView instance"
-  [target offset value]
-  (buf/write-byte target offset value))
+  [offset target value]
+  (buf/write-u8 target offset value)
+  (+ offset 1))
 
 (defn write-f32
   "Write float32. Expects a DataView instance"
-  [target offset value]
-  (buf/write-float target offset value))
+  [offset target value]
+  (buf/write-f32 target offset value)
+  (+ offset 4))
+
+(defn write-i32
+  "Write int32. Expects a DataView instance"
+  [offset target value]
+  (buf/write-i32 target offset value)
+  (+ offset 4))
+
+(defn write-u32
+  "Write int32. Expects a DataView instance"
+  [offset target value]
+  (buf/write-i32 target offset value)
+  (+ offset 4))
+
+(defn write-bool
+  "Write int32. Expects a DataView instance"
+  [offset target value]
+  (buf/write-bool target offset value)
+  (+ offset 1))
+
+(defn write-uuid
+  "Write uuid. Expects a DataView instance"
+  [offset target value]
+  (buf/write-uuid target offset value)
+  (+ offset 16))
+
+(defn write-buffer
+  [offset target value]
+  (assert (instance? js/Uint8Array target) "target should be u8 addressable heap")
+
+  (let [value (cond
+                (instance? js/ArrayBuffer value)
+                (new js/Uint8Array. value)
+
+                (instance? js/Uint8Array value)
+                value
+
+                :else
+                (throw (js/Error. "unexpected type")))]
+    (.set ^js target value offset)
+    (+ offset (.-byteLength value))))
+
+(defn assert-written
+  [final-offset prev-offset expected]
+  (assert (= expected (- final-offset prev-offset))
+          (str "expected to be written " expected " but finally writted " (- final-offset prev-offset)))
+  final-offset)
+
+(defn size
+  "Get buffer size"
+  [o]
+  (.-byteLength ^js o))
+

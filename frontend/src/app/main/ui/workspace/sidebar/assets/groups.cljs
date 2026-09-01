@@ -2,39 +2,40 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.workspace.sidebar.assets.groups
   (:require-macros [app.main.style :as stl])
   (:require
-   [app.common.files.helpers :as cfh]
+   [app.common.path-names :as cpn]
    [app.common.schema :as sm]
    [app.main.data.modal :as modal]
    [app.main.data.workspace :as dw]
    [app.main.store :as st]
    [app.main.ui.components.forms :as fm]
-   [app.main.ui.components.title-bar :refer [title-bar]]
+   [app.main.ui.components.title-bar :refer [title-bar*]]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.ds.foundations.assets.icon :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.main.ui.workspace.sidebar.assets.common :as cmm]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [rumext.v2 :as mf]))
 
-(mf/defc asset-group-title
-  [{:keys [file-id section path group-open? on-rename on-ungroup on-group-combine-variants can-combine?]}]
+(mf/defc asset-group-title*
+  [{:keys [file-id section path is-group-open on-rename on-ungroup on-delete-group on-group-combine-variants is-can-combine on-add]}]
   (when-not (empty? path)
-    (let [[other-path last-path truncated] (cfh/compact-path path 35 true)
+    (let [[other-path last-path truncated] (cpn/compact-path path 35 true)
           menu-state     (mf/use-state cmm/initial-context-menu-state)
           on-fold-group
           (mf/use-fn
-           (mf/deps file-id section path group-open?)
+           (mf/deps file-id section path is-group-open)
            (fn [event]
              (dom/stop-propagation event)
              (st/emit! (dw/set-assets-group-open file-id
                                                  section
                                                  path
-                                                 (not group-open?)))))
+                                                 (not is-group-open)))))
           on-context-menu
           (mf/use-fn
            (fn [event]
@@ -48,22 +49,18 @@
       [:div {:class (stl/css :group-title-wrapper)}
        [:div {:class (stl/css :group-title)
               :on-context-menu on-context-menu}
-        [:& title-bar {:collapsable    true
-                       :collapsed      (not group-open?)
-                       :all-clickable  true
-                       :on-collapsed   on-fold-group
-                       :title          (mf/html [:* (when-not (empty? other-path)
-                                                      [:span {:class (stl/css :pre-path)
-                                                              :title (when truncated path)}
-                                                       other-path "\u00A0\u2022\u00A0"])
-                                                 [:span {:class (stl/css :path)
-                                                         :title (when truncated path)}
-                                                  last-path]
-                                                 #_[:span {:class (stl/css :title-menu)
-                                                           :on-click on-context-menu}
-                                                    "aaa"]])}]
+        [:> title-bar* {:collapsable    true
+                        :collapsed      (not is-group-open)
+                        :on-collapsed   on-fold-group
+                        :title          (mf/html [:* (when-not (empty? other-path)
+                                                       [:span {:class (stl/css :pre-path)
+                                                               :title (when truncated path)}
+                                                        other-path "\u00A0\u2022\u00A0"])
+                                                  [:span {:class (stl/css :path)
+                                                          :title (when truncated path)}
+                                                   last-path]])}]
 
-        [:& cmm/assets-context-menu
+        [:> cmm/assets-context-menu*
          {:on-close on-close-menu
           :state @menu-state
           :options (cond-> [{:name    (tr "workspace.assets.rename")
@@ -72,17 +69,39 @@
                             {:name    (tr "workspace.assets.ungroup")
                              :id      "assets-ungroup-group"
                              :handler  #(on-ungroup path)}]
-                     can-combine?
+                     on-delete-group
+                     (conj
+                      {:name    (tr "workspace.assets.delete-group")
+                       :id      "assets-delete-group"
+                       :handler #(on-delete-group path)})
+
+                     is-can-combine
                      (conj
                       {:name    (tr "workspace.shape.menu.combine-as-variants")
                        :id      "assets-combine-as-variants"
                        :handler  #(on-group-combine-variants path)}))}]]
 
        [:div {:class (stl/css :title-menu)}
+        (when on-add
+          [:> icon-button* {:variant "ghost"
+                            :aria-label (tr "workspace.assets.typography.add-typography")
+                            :on-click on-add
+                            :icon i/add}])
         [:> icon-button* {:variant "ghost"
                           :aria-label (tr "workspace.assets.component-group-options")
                           :on-click on-context-menu
-                          :icon "menu"}]]])))
+                          :icon i/menu}]]])))
+
+(defn- sort-groups
+  "Recursively sort subgroup keys alphabetically at every nesting level."
+  [groups reverse-sort?]
+  (let [cmp (if reverse-sort? #(compare %2 %1) compare)
+        sort-tree (fn sort-tree [m]
+                    (into (sorted-map-by cmp)
+                          (map (fn [[k v]]
+                                 [k (if (map? v) (sort-tree v) v)]))
+                          m))]
+    (sort-tree groups)))
 
 (defn group-assets
   "Convert a list of assets in a nested structure like this:
@@ -95,19 +114,17 @@
   "
   [assets reverse-sort?]
   (when-not (empty? assets)
-    (reduce (fn [groups {:keys [path] :as asset}]
-              (let [path (cfh/split-path (or path ""))]
-                (update-in groups
-                           (conj path "")
-                           (fn [group]
-                             (if group
-                               (conj group asset)
-                               [asset])))))
-            (sorted-map-by (fn [key1 key2]
-                             (if reverse-sort?
-                               (compare key2 key1)
-                               (compare key1 key2))))
-            assets)))
+    (-> (reduce (fn [groups {:keys [path] :as asset}]
+                  (let [path (cpn/split-path (or path ""))]
+                    (update-in groups
+                               (conj path "")
+                               (fn [group]
+                                 (if group
+                                   (conj group asset)
+                                   [asset])))))
+                {}
+                assets)
+        (sort-groups reverse-sort?))))
 
 (def ^:private schema:group-form
   [:map {:title "GroupForm"}
@@ -143,7 +160,7 @@
           (tr "workspace.assets.create-group")
           (tr "workspace.assets.rename-group"))]
        [:button {:class (stl/css :modal-close-btn)
-                 :on-click modal/hide!} i/close]]
+                 :on-click modal/hide!} deprecated-icon/close]]
 
       [:div {:class (stl/css :modal-content)}
        [:& fm/form {:form form :on-submit on-accept}

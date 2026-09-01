@@ -2,40 +2,47 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@import "refactor/common-refactor.scss";
+@use "refactor/common-refactor.scss" as deprecated;
+@use "../../../sidebar/common/sidebar.scss" as sidebar;
+@use "ds/_utils.scss" as *;
 
 .element-set {
   display: grid;
-  margin-bottom: var(--sp-s);
-  // NOTE: this does not follow the 8-column grid and the size is not normalized,
-  --input-width: calc(var(--sp-xxxl) * 3.5 + 3 * var(--sp-xs) - var(--sp-xs) / 2);
-  grid-template-columns: var(--input-width) var(--input-width) var(--sp-xxxl);
+  grid-template-columns:
+    var(--grid-exception-input-width) /* first input block */
+    var(--grid-exception-input-width) /* second input block */
+    var(--sp-xxxl); /* action button */
+
   gap: var(--sp-xs);
+  margin-bottom: var(--sp-s);
 }
 
 .presets {
-  display: grid;
-  grid-template-columns: repeat(8, var(--sp-xxxl));
-  gap: var(--sp-xs);
+  @include sidebar.option-grid-structure;
+
   grid-column: 1 / -1;
 }
 
 .presets-wrapper {
-  @extend .asset-element;
+  @extend %asset-element;
+
   position: relative;
   grid-column: span 5;
   display: flex;
-  height: $s-32;
-  padding: $s-8;
-  border-radius: $br-8;
+  height: deprecated.$s-32;
+  padding: deprecated.$s-8;
+  border-radius: deprecated.$br-8;
 
   .collapsed-icon {
-    @include flexCenter;
+    @include deprecated.flex-center;
+
     cursor: pointer;
+
     svg {
-      @extend .button-icon-small;
+      @extend %button-icon-small;
+
       stroke: var(--icon-foreground);
       transform: rotate(90deg);
     }
@@ -53,7 +60,8 @@
 }
 
 .select-name {
-  @include bodySmallTypography;
+  @include deprecated.body-small-typography;
+
   display: flex;
   justify-content: flex-start;
   align-items: center;
@@ -62,28 +70,52 @@
 }
 
 .custom-select-dropdown {
-  @extend .dropdown-wrapper;
-  margin-top: $s-2;
+  @extend %dropdown-wrapper;
+
+  margin-top: deprecated.$s-2;
   max-height: 70vh;
-  width: $s-252;
+  width: deprecated.$s-252;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.preset-search {
+  padding: deprecated.$s-4;
+  border-bottom: deprecated.$s-1 solid var(--menu-border-color-rest, transparent);
+}
+
+.preset-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
   .dropdown-element {
-    @extend .dropdown-element-base;
+    @extend %dropdown-element-base;
+
     .name-wrapper {
       display: flex;
-      gap: $s-8;
+      gap: deprecated.$s-8;
       flex-grow: 1;
+
       .preset-name {
         color: var(--menu-foreground-color-rest);
       }
+
       .preset-size {
         color: var(--menu-foreground-color-rest);
       }
     }
 
     .check-icon {
-      @include flexCenter;
+      @include deprecated.flex-center;
+
       svg {
-        @extend .button-icon-small;
+        @extend %button-icon-small;
+
         stroke: var(--icon-foreground);
       }
     }
@@ -91,6 +123,7 @@
     &.disabled {
       pointer-events: none;
       cursor: default;
+
       .preset-name {
         color: var(--menu-foreground-color);
       }
@@ -100,6 +133,7 @@
       .name-wrapper .preset-name {
         color: var(--menu-foreground-color-hover);
       }
+
       .check-icon svg {
         stroke: var(--menu-foreground-color-hover);
       }
@@ -107,9 +141,11 @@
 
     &:hover {
       background-color: var(--menu-background-color-hover);
+
       .name-wrapper .preset-name {
         color: var(--menu-foreground-color-hover);
       }
+
       .check-icon svg {
         stroke: var(--menu-foreground-color-hover);
       }
@@ -130,13 +166,15 @@
 .x-position,
 .y-position,
 .rotation {
-  @extend .input-element;
-  @include bodySmallTypography;
+  @extend %input-element;
+  @include deprecated.body-small-typography;
+
   .icon-text {
-    padding-top: $s-1;
+    padding-top: deprecated.$s-1;
   }
+
   &.disabled {
-    @extend .disabled-input;
+    @extend %disabled-input;
   }
 }
 
@@ -145,17 +183,20 @@
 }
 
 .lock-size-btn {
-  @extend .button-tertiary;
-  border-radius: $br-8;
-  height: $s-32;
-  width: $s-28;
+  @extend %button-tertiary;
+
+  border-radius: deprecated.$br-8;
+  height: deprecated.$s-32;
+  width: deprecated.$s-28;
+
   &.selected {
-    @extend .button-icon-selected;
+    @extend %button-icon-selected;
   }
 }
 
 .lock-ratio-icon {
-  @extend .button-icon;
+  @extend %button-icon;
+
   stroke: var(--icon-foreground);
 }
 
@@ -163,7 +204,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
-  gap: $s-4;
+  gap: deprecated.$s-4;
 }
 
 .clip-content,
@@ -174,16 +215,22 @@
 }
 
 .clip-content-label {
-  @extend .button-tertiary;
+  @extend %button-tertiary;
+
   height: var(--sp-xxxl);
   width: var(--sp-xxxl);
-  border-radius: $br-8;
+  border-radius: deprecated.$br-8;
 }
 
 .selected {
-  @extend .button-icon-selected;
+  @extend %button-icon-selected;
 }
 
 .checkbox-button {
-  @extend .button-icon;
+  @extend %button-icon;
+}
+
+// TODO: Add a proper variable to this sizing
+.numeric-input-measures {
+  --dropdown-width: var(--seven-columns-width);
 }

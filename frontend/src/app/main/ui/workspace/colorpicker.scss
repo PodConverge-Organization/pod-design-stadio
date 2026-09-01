@@ -2,17 +2,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@import "refactor/common-refactor.scss";
-@import "../ds/_sizes.scss";
+@use "ds/typography.scss" as t;
+@use "ds/spacing";
+@use "ds/_borders.scss" as *;
+@use "ds/_sizes.scss" as *;
+@use "ds/_utils.scss" as *;
+@use "refactor/basic-rules.scss" as *;
 
 .colorpicker-tooltip {
-  @extend .modal-background;
-  left: calc(10 * $s-140);
-  width: auto;
+  @extend %modal-background;
+
+  --colorpicker-width: #{$sz-284};
+
+  left: calc(10 * px2rem(140));
   padding: var(--sp-m);
-  width: $sz-284;
+  width: var(--colorpicker-width);
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -23,64 +29,71 @@
   overflow: hidden;
 }
 
-.colorpicker-tabs {
-  padding: 0 var(--sp-m);
-}
-
 .top-actions {
   display: flex;
   align-items: flex-start;
   flex-direction: row-reverse;
   justify-content: space-between;
-  height: $s-40;
-  padding: 0 var(--sp-m);
+  height: $sz-40;
 }
 
 .top-actions-right {
   display: flex;
-  gap: $s-8;
+  gap: var(--sp-s);
 }
 
 .opacity-input-wrapper {
-  @extend .input-element;
-  @include bodySmallTypography;
-  width: $s-68;
+  @extend %input-element;
+  @include t.use-typography("body-small");
+
+  width: px2rem(68);
 }
 
+// TODO: change to DS button component
 .picker-btn {
-  @include buttonStyle;
-  @include flexCenter;
-  border-radius: $br-8;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: none;
+  cursor: pointer;
   background-color: transparent;
-  border: $s-1 solid transparent;
-  height: $s-20;
-  width: $s-20;
+  border: $b-1 solid transparent;
+  height: var(--sp-xl);
+  width: var(--sp-xl);
   border-radius: $br-4;
   padding: 0;
-  margin-top: $s-4;
+  margin-top: var(--sp-xs);
+
   svg {
-    @extend .button-icon;
+    @extend %button-icon;
+
     stroke: var(--button-tertiary-foreground-color-rest);
   }
+
   &:hover {
     svg {
       stroke: var(--button-tertiary-foreground-color-focus);
     }
   }
+
   &:focus,
   &:focus-visible {
     outline: none;
+
     svg {
       stroke: var(--button-secondary-foreground-color-hover);
     }
   }
+
   &:active {
     outline: none;
-    border: $s-1 solid transparent;
+    border: $b-1 solid transparent;
+
     svg {
       stroke: var(--button-tertiary-foreground-color-active);
     }
   }
+
   &.selected {
     svg {
       stroke: var(--button-tertiary-foreground-color-active);
@@ -91,64 +104,71 @@
 .gradient-buttons {
   display: flex;
   align-items: center;
-  gap: $s-8;
+  gap: var(--sp-s);
 }
 
 .gradient-btn {
-  @extend .button-tertiary;
-  height: $s-20;
-  width: $s-20;
+  @extend %button-tertiary;
+
+  height: var(--sp-xl);
+  width: var(--sp-xl);
   border-radius: $br-4;
-  border: $s-2 solid transparent;
+  border: $b-2 solid transparent;
+
   &:hover {
-    border: $s-2 solid var(--colorpicker-details-color-selected);
+    border: $b-2 solid var(--colorpicker-details-color-selected);
   }
 }
 
 .linear-gradient-btn {
   background: linear-gradient(180deg, var(--color-foreground-secondary), transparent);
+
   &.selected {
-    background: linear-gradient(to bottom, rgba(126, 255, 245, 1) 0%, rgba(126, 255, 245, 0.2) 100%);
-    border: $s-2 solid var(--colorpicker-details-color-selected);
+    background: linear-gradient(to bottom, rgb(126 255 245 / 1) 0%, rgb(126 255 245 / 0.2) 100%);
+    border: $b-2 solid var(--colorpicker-details-color-selected);
   }
 }
 
 .radial-gradient-btn {
   background: radial-gradient(transparent, var(--color-foreground-secondary));
+
   &.selected {
-    background: radial-gradient(rgba(126, 255, 245, 1) 0%, rgba(126, 255, 245, 0.2) 100%);
-    border: $s-2 solid var(--colorpicker-details-color-selected);
+    background: radial-gradient(rgb(126 255 245 / 1) 0%, rgb(126 255 245 / 0.2) 100%);
+    border: $b-2 solid var(--colorpicker-details-color-selected);
   }
 }
 
 .actions {
   display: flex;
-  gap: $s-4;
+  gap: var(--sp-xs);
 }
 
 .accept-color {
-  @include uppercaseTitleTipography;
-  @extend .button-primary;
+  @include t.use-typography("headline-small");
+  @extend %button-primary;
+
   width: 100%;
-  height: $s-32;
-  margin-top: $s-8;
+  height: var(--sp-xxxl);
+  margin-top: var(--sp-s);
 }
 
 .picker-detail-wrapper {
-  @include flexCenter;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   position: relative;
-  margin: $s-12 0 $s-8 0;
+  margin: var(--sp-m) 0 var(--sp-s) 0;
 }
 
 .center-circle {
-  width: $s-24;
-  height: $s-24;
-  border: $s-2 solid var(--colorpicker-details-color);
+  width: var(--sp-xxl);
+  height: var(--sp-xxl);
+  border: $b-2 solid var(--colorpicker-details-color);
   border-radius: $br-circle;
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(calc(-1 * $s-12), calc(-1 * $s-12));
+  transform: translate(calc(-1 * var(--sp-m)), calc(-1 * var(--sp-m)));
 }
 
 .picker-detail {
@@ -157,11 +177,11 @@
 }
 
 .select {
-  width: $s-116;
+  width: px2rem(116);
 }
 
 .select-image {
-  margin-top: $s-4;
+  margin-top: var(--sp-xs);
 }
 
 .content {
@@ -170,10 +190,11 @@
   justify-content: center;
   background-image: url("/images/colorpicker-no-image.png");
   background-position: center;
-  background-size: auto $s-140;
-  height: $s-140;
-  margin-bottom: $s-6;
-  margin-right: $s-1;
+  background-size: auto px2rem(140);
+  height: px2rem(140);
+  margin-bottom: $sz-6;
+  margin-right: $sz-1;
+
   img {
     height: fit-content;
     width: fit-content;
@@ -184,14 +205,25 @@
 }
 
 .choose-image {
-  @extend .button-secondary;
-  @include uppercaseTitleTipography;
+  @extend %button-secondary;
+  @include t.use-typography("headline-small");
+
   width: 100%;
-  margin-top: $s-12;
-  height: $s-32;
+  margin-top: var(--sp-m);
+  height: var(--sp-xxxl);
 }
 
 .checkbox-option {
-  @extend .input-checkbox;
-  margin: $s-16 0 0 0;
+  @extend %input-checkbox;
+
+  margin: var(--sp-l) 0 0 0;
+}
+
+.token-color-title {
+  @include t.use-typography("title-small");
+
+  color: var(--color-foreground-secondary);
+  display: flex;
+  align-items: center;
+  height: var(--sp-xxxl);
 }

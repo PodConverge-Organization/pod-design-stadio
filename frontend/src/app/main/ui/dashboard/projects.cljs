@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.dashboard.projects
   (:require-macros [app.main.style :as stl])
@@ -11,42 +11,43 @@
    [app.common.time :as ct]
    [app.main.data.common :as dcm]
    [app.main.data.dashboard :as dd]
+   [app.main.data.dashboard.shortcuts :as sc]
    [app.main.data.event :as ev]
-   [app.main.data.modal :as modal]
+   [app.main.data.nitrate :as dnt]
    [app.main.data.project :as dpj]
+   [app.main.data.team :as dtm]
    [app.main.refs :as refs]
    [app.main.store :as st]
+   [app.main.ui.dashboard.deleted :as deleted]
    [app.main.ui.dashboard.grid :refer [line-grid]]
    [app.main.ui.dashboard.inline-edition :refer [inline-edition]]
    [app.main.ui.dashboard.pin-button :refer [pin-button*]]
    [app.main.ui.dashboard.project-menu :refer [project-menu*]]
    [app.main.ui.ds.product.empty-placeholder :refer [empty-placeholder*]]
    [app.main.ui.hooks :as hooks]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.keyboard :as kbd]
    [app.util.storage :as storage]
    [cuerdas.core :as str]
    [okulary.core :as l]
-   [potok.v2.core :as ptk]
    [rumext.v2 :as mf]))
 
 (def ^:private show-more-icon
-  (i/icon-xref :arrow (stl/css :show-more-icon)))
+  (deprecated-icon/icon-xref :arrow (stl/css :show-more-icon)))
 
 (def ^:private close-icon
-  (i/icon-xref :close (stl/css :close-icon)))
+  (deprecated-icon/icon-xref :close (stl/css :close-icon)))
 
 (def ^:private add-icon
-  (i/icon-xref :add (stl/css :add-icon)))
+  (deprecated-icon/icon-xref :add (stl/css :add-icon)))
 
 (def ^:private menu-icon
-  (i/icon-xref :menu (stl/css :menu-icon)))
+  (deprecated-icon/icon-xref :menu (stl/css :menu-icon)))
 
 (mf/defc header*
   {::mf/wrap [mf/memo]
-   ::mf/props :obj
    ::mf/private true}
   [{:keys [can-edit]}]
   (let [on-click (mf/use-fn #(st/emit! (dd/create-project)))]
@@ -60,8 +61,7 @@
         (tr "dashboard.new-project")])]))
 
 (mf/defc team-hero*
-  {::mf/wrap [mf/memo]
-   ::mf/props :obj}
+  {::mf/wrap [mf/memo]}
   [{:keys [team on-close]}]
   (let [on-nav-members-click (mf/use-fn #(st/emit! (dcm/go-to-dashboard-members)))
 
@@ -69,9 +69,8 @@
         (mf/use-fn
          (mf/deps team)
          (fn []
-           (st/emit! (modal/show {:type :invite-members
-                                  :team team
-                                  :origin :hero}))))
+           (st/emit! (dtm/check-and-invite-members {:team-id (:id team)
+                                                    :origin :hero}))))
         on-close'
         (mf/use-fn
          (mf/deps on-close)
@@ -100,8 +99,7 @@
       close-icon]]))
 
 (mf/defc project-item*
-  {::mf/props :obj
-   ::mf/private true}
+  {::mf/private true}
   [{:keys [project is-first team files can-edit]}]
   (let [project-id (get project :id)
         team-id    (get team :id)
@@ -244,7 +242,10 @@
         [:div {:class (stl/css-case :project-actions true
                                     :pinned-project (:is-pinned project))}
          (when-not (:is-default project)
-           [:> pin-button* {:class (stl/css :pin-button) :is-pinned (:is-pinned project) :on-click toggle-pin :tab-index 0}])
+           [:> pin-button* {:class (stl/css :pin-button)
+                            :is-pinned (:is-pinned project)
+                            :on-click toggle-pin
+                            :tab-index 0}])
 
          (when ^boolean can-edit
            [:button {:class (stl/css :add-file-btn)
@@ -308,36 +309,40 @@
   (l/derived :recent-files st/state))
 
 (mf/defc projects-section*
-  {::mf/props :obj}
   [{:keys [team projects profile]}]
 
-  (let [projects
+  (let [team-id         (get team :id)
+
+        recent-map      (mf/deref ref:recent-files)
+        permisions      (:permissions team)
+
+        can-edit        (:can-edit permisions)
+        can-invite      (dnt/can-send-invitations?
+                         {:organization (:organization team)
+                          :profile-id (:id profile)
+                          :team-permissions permisions})
+
+        show-team-hero* (mf/use-state #(get storage/global ::show-team-hero true))
+        show-team-hero? (deref show-team-hero*)
+
+        my-penpot?      (= (:default-team-id profile) team-id)
+        default-team?   (:is-default team)
+
+        show-deleted?   (:can-edit permisions)
+
+        projects
         (mf/with-memo [projects]
           (->> projects
+               (remove :deleted-at)
                (sort-by :modified-at)
                (reverse)))
-
-        team-id             (get team :id)
-
-        recent-map          (mf/deref ref:recent-files)
-        permisions          (:permissions team)
-
-        can-edit            (:can-edit permisions)
-        can-invite          (or (:is-owner permisions)
-                                (:is-admin permisions))
-
-        show-team-hero*     (mf/use-state #(get storage/global ::show-team-hero true))
-        show-team-hero?     (deref show-team-hero*)
-
-        is-my-penpot        (= (:default-team-id profile) team-id)
-        is-defalt-team?     (:is-default team)
 
         on-close
         (mf/use-fn
          (fn []
            (reset! show-team-hero* false)
-           (st/emit! (ptk/data-event ::ev/event {::ev/name "dont-show-team-up-hero"
-                                                 ::ev/origin "dashboard"}))))]
+           (st/emit! (ev/event {::ev/name "dont-show-team-up-hero"
+                                ::ev/origin "dashboard"}))))]
 
     (mf/with-effect [show-team-hero?]
       (swap! storage/global assoc ::show-team-hero show-team-hero?))
@@ -352,6 +357,8 @@
       (st/emit! (dd/fetch-recent-files team-id)
                 (dd/clear-selected-files)))
 
+    (hooks/use-shortcuts ::dashboard sc/shortcuts-projects)
+
     (when (seq projects)
       [:*
        [:> header* {:can-edit can-edit}]
@@ -359,16 +366,20 @@
         [:*
          (when (and show-team-hero?
                     can-invite
-                    (not is-defalt-team?))
+                    (not default-team?))
            [:> team-hero* {:team team :on-close on-close}])
 
          [:div {:class (stl/css-case :dashboard-container true
                                      :no-bg true
                                      :dashboard-projects true
-                                     :with-team-hero (and (not is-my-penpot)
-                                                          (not is-defalt-team?)
+                                     :with-team-hero (and (not my-penpot?)
+                                                          (not default-team?)
                                                           show-team-hero?
                                                           can-invite))}
+
+          (when show-deleted?
+            [:> deleted/menu* {:team-id team-id :section :dashboard-recent}])
+
           (for [{:keys [id] :as project} projects]
             ;; FIXME: refactor this, looks inneficient
             (let [files (when recent-map

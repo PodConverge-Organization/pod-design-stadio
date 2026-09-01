@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.srepl.helpers
   "A  main namespace for server repl."
@@ -14,9 +14,8 @@
    [app.common.files.validate :as cfv]
    [app.common.time :as ct]
    [app.db :as db]
-   [app.main :as main]
-   [app.rpc.commands.files :as files]
-   [app.rpc.commands.files-snapshot :as fsnap]))
+   [app.features.file-snapshots :as fsnap]
+   [app.system :as sys]))
 
 (def ^:dynamic *system* nil)
 
@@ -38,17 +37,17 @@
 (defn get-file
   "Get the migrated data of one file."
   ([id]
-   (get-file (or *system* main/system) id))
+   (get-file (or *system* sys/system) id))
   ([system id]
    (db/run! system bfc/get-file id)))
 
 (defn get-raw-file
   "Get the migrated data of one file."
-  ([id] (get-raw-file (or *system* main/system) id))
+  ([id] (get-raw-file (or *system* sys/system) id))
   ([system id]
    (db/run! system
             (fn [system]
-              (files/get-file system id :migrate? false)))))
+              (bfc/get-file system id :decode? false)))))
 
 (defn update-team!
   [system {:keys [id] :as team}]
@@ -118,10 +117,10 @@
   (let [conn (db/get-connection system)]
     (->> (get-and-lock-team-files conn team-id)
          (reduce (fn [result file-id]
-                   (let [file (fsnap/get-file-snapshots system file-id)]
-                     (fsnap/create-file-snapshot! system file
-                                                  {:label label
-                                                   :created-by :admin})
+                   (let [file (bfc/get-file system file-id :realize? true :lock-for-update? true)]
+                     (fsnap/create! system file
+                                    {:label label
+                                     :created-by "admin"})
                      (inc result)))
                  0))))
 
@@ -132,21 +131,34 @@
                   (into #{}))
 
         snap (search-file-snapshots conn ids label)
-
         ids' (into #{} (map :file-id) snap)]
 
     (when (not= ids ids')
       (throw (RuntimeException. "no uniform snapshot available")))
 
     (reduce (fn [result {:keys [file-id id]}]
-              (fsnap/restore-file-snapshot! system file-id id)
+              (fsnap/restore! system file-id id)
               (inc result))
             0
             snap)))
 
+(defn mark-migrated!
+  "A helper that inserts an entry in the file migration table for make
+  file migrated for the specified migration label."
+  [system file-id label]
+  (db/insert! system :file-migration
+              {:file-id file-id
+               :name label}
+              {::db/return-keys false}))
+
 (defn process-file!
-  [system file-id update-fn & {:keys [label validate? with-libraries?] :or {validate? true} :as opts}]
-  (let [file  (bfc/get-file system file-id ::db/for-update true)
+  [system file-id update-fn
+   & {:keys [::snapshot-label ::validate? ::with-libraries?]
+      :or {validate? true} :as opts}]
+  (let [file  (bfc/get-file system file-id
+                            :lock-for-update? true
+                            :realize? true)
+
         libs  (when with-libraries?
                 (bfc/get-resolved-file-libraries system file))
 
@@ -162,12 +174,12 @@
       (when validate?
         (cfv/validate-file-schema! file'))
 
-      (when (string? label)
-        (fsnap/create-file-snapshot! system file
-                                     {:label label
-                                      :deleted-at (ct/in-future {:days 30})
-                                      :created-by :admin}))
+      (when (string? snapshot-label)
+        (fsnap/create! system file
+                       {:label snapshot-label
+                        :deleted-at (ct/in-future {:days 30})
+                        :created-by "admin"}))
 
       (let [file' (update file' :revn inc)]
-        (bfc/update-file! system file')
+        (bfc/update-file! system file' opts)
         true))))

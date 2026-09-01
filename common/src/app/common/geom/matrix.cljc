@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.geom.matrix
   (:require
@@ -25,16 +25,7 @@
 
 ;; --- Matrix Impl
 
-(defn format-precision
-  [mtx precision]
-  (when mtx
-    (dm/fmt "matrix(%, %, %, %, %, %)"
-            (mth/to-fixed (.-a mtx) precision)
-            (mth/to-fixed (.-b mtx) precision)
-            (mth/to-fixed (.-c mtx) precision)
-            (mth/to-fixed (.-d mtx) precision)
-            (mth/to-fixed (.-e mtx) precision)
-            (mth/to-fixed (.-f mtx) precision))))
+(declare format-precision)
 
 (cr/defrecord Matrix [^double a
                       ^double b
@@ -45,6 +36,17 @@
   Object
   (toString [this]
     (format-precision this precision)))
+
+(defn format-precision
+  [mtx precision]
+  (when mtx
+    (dm/fmt "matrix(%, %, %, %, %, %)"
+            (mth/to-fixed (.-a ^Matrix mtx) precision)
+            (mth/to-fixed (.-b ^Matrix mtx) precision)
+            (mth/to-fixed (.-c ^Matrix mtx) precision)
+            (mth/to-fixed (.-d ^Matrix mtx) precision)
+            (mth/to-fixed (.-e ^Matrix mtx) precision)
+            (mth/to-fixed (.-f ^Matrix mtx) precision))))
 
 (defn matrix?
   "Return true if `v` is Matrix instance."
@@ -99,7 +101,7 @@
             (dm/get-prop o :c) ","
             (dm/get-prop o :d) ","
             (dm/get-prop o :e) ","
-            (dm/get-prop o :f) ",")
+            (dm/get-prop o :f))
     o))
 
 (defn- matrix->json
@@ -356,8 +358,6 @@
          (th-eq m1d m2d)
          (th-eq m1e m2e)
          (th-eq m1f m2f))))
-
-(defmethod pp/simple-dispatch Matrix [obj] (pr obj))
 
 (defn transform-in [pt mtx]
   (if (and (some? pt) (some? mtx))

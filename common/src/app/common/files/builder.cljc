@@ -2,17 +2,17 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.files.builder
   "Internal implementation of file builder. Mainly used as base impl
   for penpot library"
   (:require
+   ;; [app.common.features :as cfeat]
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.exceptions :as ex]
    [app.common.files.changes :as ch]
-   ;; [app.common.features :as cfeat]
    [app.common.files.helpers :as cph]
    [app.common.files.migrations :as fmig]
    [app.common.geom.shapes :as gsh]
@@ -26,6 +26,7 @@
    [app.common.types.path :as types.path]
    [app.common.types.shape :as types.shape]
    [app.common.types.typography :as types.typography]
+   [app.common.types.variant :as types.variant]
    [app.common.uuid :as uuid]
    [cuerdas.core :as str]))
 
@@ -126,10 +127,12 @@
   [:map
    [:component-id ::sm/uuid]
    [:file-id {:optional true} ::sm/uuid]
-   [:name {:optional true} ::sm/text]
-   [:path {:optional true} ::sm/text]
+   [:page-id {:optional true} ::sm/uuid]
    [:frame-id {:optional true} ::sm/uuid]
-   [:page-id {:optional true} ::sm/uuid]])
+   [:name {:optional true} :string]
+   [:path {:optional true} :string]
+   [:variant-id {:optional true} ::sm/uuid]
+   [:variant-properties {:optional true} [:vector types.variant/schema:variant-property]]])
 
 (def ^:private check-add-component
   (sm/check-fn schema:add-component
@@ -200,7 +203,8 @@
     "layout/grid"
     "components/v2"
     "plugins/runtime"
-    "design-tokens/v1"})
+    "design-tokens/v1"
+    "variants/v1"})
 
 ;; WORKAROUND: the same as features
 (def available-migrations
@@ -352,7 +356,7 @@
                 :code :empty-children
                 :hint "expected a group with at least one shape for creating a bool"))
 
-    (let [head  (if (= type :difference)
+    (let [head  (if (= (:bool-type bool-shape) :difference)
                   (first children)
                   (last children))
           fills (if (and (contains? head :svg-attrs) (empty? (:fills head)))
@@ -360,7 +364,7 @@
                   (get head :fills))]
       (-> bool-shape
           (assoc :fills fills)
-          (assoc :stroks (get head :strokes))))))
+          (assoc :strokes (get head :strokes))))))
 
 (defn add-bool
   [state params]
@@ -443,7 +447,7 @@
 
 (defn add-component
   [state params]
-  (let [{:keys [component-id file-id page-id frame-id name path]}
+  (let [{:keys [component-id file-id page-id frame-id name path variant-id variant-properties]}
         (-> (check-add-component params)
             (update :component-id default-uuid))
 
@@ -461,9 +465,11 @@
          {:type :add-component
           :id component-id
           :name (or name "anonmous")
-          :path path
+          :path (d/nilv path "")
           :main-instance-id frame-id
-          :main-instance-page page-id})
+          :main-instance-page page-id
+          :variant-id variant-id
+          :variant-properties variant-properties})
 
         change2
         {:type :mod-obj
@@ -478,6 +484,13 @@
     (-> state
         (commit-change change1)
         (commit-change change2))))
+
+(defn add-tokens-lib
+  [state tokens-lib]
+  (-> state
+      (commit-change
+       {:type :set-tokens-lib
+        :tokens-lib tokens-lib})))
 
 (defn delete-shape
   [file id]
@@ -563,7 +576,7 @@
         {:keys [id width height name]}
         (-> params
             (update :id default-uuid)
-            (check-add-file-media params))]
+            (check-add-file-media))]
 
     (-> state
         (update ::blobs assoc media-id blob)

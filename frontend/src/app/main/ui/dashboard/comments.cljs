@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.dashboard.comments
   (:require-macros [app.main.style :as stl])
@@ -15,16 +15,15 @@
    [app.main.ui.comments :as cmt]
    [app.main.ui.components.dropdown :refer [dropdown]]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.ds.foundations.assets.icon :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.util.i18n :as i18n :refer [tr]]
-   [potok.v2.core :as ptk]
    [rumext.v2 :as mf]))
 
 (def ^:private comments-icon-svg
-  (i/icon-xref :comments (stl/css :comments-icon)))
+  (deprecated-icon/icon-xref :comments (stl/css :comments-icon)))
 
 (mf/defc comments-icon*
-  {::mf/props :obj}
   [{:keys [profile on-show-comments]}]
 
   (let [threads-map (mf/deref refs/comment-threads)
@@ -43,7 +42,7 @@
                        :data-testid "open-comments"
                        :aria-label (tr "dashboard.notifications.view")
                        :on-click on-show-comments
-                       :icon "comments"}
+                       :icon i/comments}
       (when (seq tgroups)
         [:div {:class (stl/css :unread)}])]]))
 
@@ -80,8 +79,8 @@
      (mf/deps show?)
      (fn []
        (when show?
-         (st/emit! (ptk/event ::ev/event {::ev/name "open-comment-notifications"
-                                          ::ev/origin "dashboard"})))))
+         (st/emit! (ev/event {::ev/name "open-comment-notifications"
+                              ::ev/origin "dashboard"})))))
 
     [:div {:class (stl/css :dashboard-comments-section)}
      [:& dropdown {:show show? :on-close on-hide-comments :dropdown-id "dashboard-comments"}
@@ -94,14 +93,14 @@
                             :tab-index (if show? "0" "-1")
                             :aria-label (tr "label.mark-all-as-read")
                             :on-click on-read-all
-                            :icon "tick"}])
+                            :icon i/tick}])
 
         [:> icon-button* {:class (stl/css :notifications-button)
                           :variant "action"
                           :tab-index (if show? "0" "-1")
                           :aria-label (tr "labels.close")
                           :on-click on-hide-comments
-                          :icon "close"}]]
+                          :icon i/close}]]
 
        (if (seq tgroups)
          [:div {:class (stl/css :thread-groups)}

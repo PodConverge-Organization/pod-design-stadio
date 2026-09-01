@@ -2,37 +2,40 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@import "refactor/common-refactor.scss";
+@use "refactor/common-refactor.scss" as deprecated;
 
 .modal-overlay {
-  @extend .modal-overlay-base;
+  @extend %modal-overlay-base;
 }
 
 .modal-container {
-  @extend .modal-container-base;
-  width: $s-368;
+  @extend %modal-container-base;
+
+  width: deprecated.$s-368;
 }
 
 .modal-header {
-  margin-bottom: $s-24;
+  margin-bottom: deprecated.$s-24;
 }
 
 .modal-title {
-  @include uppercaseTitleTipography;
+  @include deprecated.uppercase-title-typography;
+
   color: var(--modal-title-foreground-color);
 }
 
 .modal-close-btn {
-  @extend .modal-close-btn-base;
+  @extend %modal-close-btn-base;
 }
 
 .modal-content {
-  @include flexColumn;
-  @include bodySmallTypography;
-  gap: $s-24;
-  max-height: $s-400;
+  @include deprecated.flex-column;
+  @include deprecated.body-small-typography;
+
+  gap: deprecated.$s-24;
+  max-height: deprecated.$s-400;
   overflow: hidden auto;
 
   form {
@@ -56,19 +59,20 @@
 .link-entry {
   display: flex;
   flex-direction: column;
-  gap: $s-12;
+  gap: deprecated.$s-12;
 
   span {
     text-align: center;
-    font-size: $fs-14;
+    font-size: deprecated.$fs-14;
     color: var(--modal-text-foreground-color);
-    margin-top: $s-12;
+    margin-top: deprecated.$s-12;
   }
 
   a {
-    @extend .button-secondary;
-    height: $s-40;
+    @extend %button-secondary;
+
+    height: deprecated.$s-40;
     text-transform: uppercase;
-    font-size: $fs-11;
+    font-size: deprecated.$fs-11;
   }
 }

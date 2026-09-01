@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.data.workspace.selection
   (:require
@@ -16,6 +16,7 @@
    [app.common.geom.shapes :as gsh]
    [app.common.logic.libraries :as cll]
    [app.common.types.component :as ctk]
+   [app.common.types.container :as ctn]
    [app.common.uuid :as uuid]
    [app.main.data.changes :as dch]
    [app.main.data.event :as ev]
@@ -23,8 +24,10 @@
    [app.main.data.modal :as md]
    [app.main.data.workspace.collapse :as dwc]
    [app.main.data.workspace.edition :as dwe]
+   [app.main.data.workspace.pages :as-alias dwpg]
    [app.main.data.workspace.specialized-panel :as-alias dwsp]
    [app.main.data.workspace.undo :as dwu]
+   [app.main.data.workspace.viewport-wasm :as dwvw]
    [app.main.data.workspace.zoom :as dwz]
    [app.main.refs :as refs]
    [app.main.router :as rt]
@@ -130,6 +133,8 @@
   ([id toggle?]
    (dm/assert! (uuid? id))
    (ptk/reify ::select-shape
+     ev/PerformanceEvent
+
      ptk/UpdateEvent
      (update [_ state]
        (-> state
@@ -169,13 +174,17 @@
              current        (get objects first-selected)
              parent         (get objects (:parent-id current))
              sibling-ids    (:shapes parent)
-             current-index  (d/index-of sibling-ids first-selected)
-             sibling        (if (= (dec (count sibling-ids)) current-index)
-                              (first sibling-ids)
-                              (nth sibling-ids (inc current-index)))]
+             ;; `index-of` is nil when the shape is not listed under the parent (stale
+             ;; selection or inconsistent tree). Do not call `nth` with `(dec nil)` — in
+             ;; ClojureScript that is -1 and throws (see penpot#7064).
+             current-index  (some-> sibling-ids (d/index-of first-selected))
+             sibling        (when (some? current-index)
+                              (if (= (dec (count sibling-ids)) current-index)
+                                (first sibling-ids)
+                                (nth sibling-ids (inc current-index) nil)))]
 
          (cond
-           (= 1 count-selected)
+           (and (= 1 count-selected) (some? sibling))
            (rx/of (select-shape sibling))
 
            (> count-selected 1)
@@ -194,12 +203,13 @@
              current        (get objects first-selected)
              parent         (get objects (:parent-id current))
              sibling-ids    (:shapes parent)
-             current-index  (d/index-of sibling-ids first-selected)
-             sibling        (if (= 0 current-index)
-                              (last sibling-ids)
-                              (nth sibling-ids (dec current-index)))]
+             current-index  (some-> sibling-ids (d/index-of first-selected))
+             sibling        (when (some? current-index)
+                              (if (= 0 current-index)
+                                (last sibling-ids)
+                                (nth sibling-ids (dec current-index) nil)))]
          (cond
-           (= 1 count-selected)
+           (and (= 1 count-selected) (some? sibling))
            (rx/of (select-shape sibling))
 
            (> count-selected 1)
@@ -211,7 +221,7 @@
   (ptk/reify ::deselect-shape
     ptk/WatchEvent
     (watch [_ _ _]
-      (rx/of ::dwsp/interrupt))
+      (rx/of :interrupt ::dwsp/interrupt))
     ptk/UpdateEvent
     (update [_ state]
       (-> state
@@ -226,7 +236,7 @@
    (ptk/reify ::shift-select-shapes
      ptk/WatchEvent
      (watch [_ _ _]
-       (rx/of ::dwsp/interrupt))
+       (rx/of :interrupt ::dwsp/interrupt))
      ptk/UpdateEvent
      (update [_ state]
        (let [objects (or objects (dsh/lookup-page-objects state))
@@ -247,6 +257,8 @@
         (d/ordered-set? ids)))
 
   (ptk/reify ::select-shapes
+    ev/PerformanceEvent
+
     ptk/UpdateEvent
     (update [_ state]
       (let [objects (dsh/lookup-page-objects state)
@@ -258,14 +270,23 @@
 
     ptk/WatchEvent
     (watch [_ state _]
-      (let [objects (dsh/lookup-page-objects state)]
-        (rx/of
-         (dwc/expand-all-parents ids objects)
-         ::dwsp/interrupt)))))
+      (let [objects (dsh/lookup-page-objects state)
+            ;; Schedule expanding parents asynchronously to avoid blocking
+            ;; the event loop
+            expand-s (->> (rx/of (dwc/expand-all-parents ids objects))
+                          (rx/observe-on :async))
+            ;; :interrupt aborts drag-stopper; only emit it when clearing edition
+            ;; (unconditional emit broke marquee selection after #10798).
+            interrupt-s (if (some? (dm/get-in state [:workspace-local :edition]))
+                          (rx/of :interrupt ::dwsp/interrupt)
+                          (rx/of ::dwsp/interrupt))]
+        (rx/merge expand-s interrupt-s)))))
 
 (defn select-all
   []
   (ptk/reify ::select-all
+    ev/PerformanceEvent
+
     ptk/WatchEvent
     (watch [_ state _]
       (let [;; Make the select-all aware of the focus mode; in this
@@ -343,7 +364,7 @@
 
          (if (some? selrect)
            (->> (ask-worker
-                 {:cmd :selection/query
+                 {:cmd :index/query-selection
                   :page-id page-id
                   :rect selrect
                   :include-frames? true
@@ -392,40 +413,16 @@
   the displacement and apply it to the third copy. This is useful for doing
   grids or cascades of cloned objects."
   [id-original id-duplicated]
-  (dm/assert!
-   "expected valid uuid for `id-original` and `id-duplicated`"
-   (and (uuid? id-original) (uuid? id-duplicated)))
-
   (ptk/reify ::memorize-duplicated
     ptk/UpdateEvent
     (update [_ state]
-      ;; Check both shapes in the workspace before memorizing
-      (let [file-id (:current-file-id state)
-            page-id (:current-page-id state)
-            fdata   (dsh/lookup-file-data state file-id)
-            page    (dsh/get-page fdata page-id)
-            objects (:objects page)
-            shape-original  (get objects id-original)
-            shape-duplicated (get objects id-duplicated)]
-
-        ;; Abort if either shape is a print area
-        (if (or (and shape-original (dsh/shape-is-print-area? shape-original))
-                (and shape-duplicated (dsh/shape-is-print-area? shape-duplicated)))
-          (do
-            (js/console.debug
-             "memorize-duplicated: aborting because one of the shapes is a print-area"
-             (clj->js {:original id-original :duplicated id-duplicated}))
-            ;; Abort: return original state (no change)
-            state)
-          ;; Otherwise, record duplication info
-          (assoc-in state [:workspace-local :duplicated]
-                    {:id-original id-original
-                     :id-duplicated id-duplicated}))))
+      (assoc-in state [:workspace-local :duplicated] {:id-original id-original
+                                                      :id-duplicated id-duplicated}))
 
     ptk/WatchEvent
     (watch [_ _ stream]
       (let [stopper (rx/filter (ptk/type? ::memorize-duplicated) stream)]
-        (->> (rx/timer 10000) ;; after 10s clear the record unless replaced
+        (->> (rx/timer 10000) ;; This time may be adjusted after some user testing.
              (rx/take-until stopper)
              (rx/map clear-memorize-duplicated))))))
 
@@ -455,34 +452,33 @@
 
         (gpt/subtract new-pos pt-obj)))))
 
+(defn- print-area-ids-in-subtrees
+  [ids objects]
+  (into []
+        (comp
+         (mapcat #(cfh/get-children-ids-with-self objects %))
+         (distinct)
+         (filter
+          (fn [id]
+            (when-let [shape (get objects id)]
+              (dsh/shape-is-print-area? shape)))))
+        ids))
+
 (defn duplicate-shapes
   [ids & {:keys [move-delta? alt-duplication? change-selection? return-ref]
           :or {move-delta? false alt-duplication? false change-selection? true return-ref nil}}]
   (ptk/reify ::duplicate-shapes
     ptk/WatchEvent
     (watch [it state _]
-      (let [page     (dsh/lookup-page state)
-            objects  (:objects page)
-            ;; normalize ids to a set of allowed-duplicate ids (same as before)
-            ids (into #{}
-                      (comp (map (d/getf objects))
-                            (filter #(ctk/allow-duplicate? objects %))
-                            (map :id))
-                      ids)]
-
-        ;; Abort if any of the supplied ids is a print-area shape.
-        (let [print-area-ids (->> ids
-                                  (filter (fn [id]
-                                            (let [shape (get objects id)]
-                                              (and shape (dsh/shape-is-print-area? shape)))))
-                                  (into []))]
-          (when (seq print-area-ids)
-            (js/console.debug "duplicate-shapes: aborting because ids contain print-area" (clj->js print-area-ids))
-            ;; return empty observable -> abort operation
-            (rx/empty)))
-
-        ;; If we reach here and ids is non-empty proceed as before.
-        (when (seq ids)
+      (let [page           (dsh/lookup-page state)
+            objects        (:objects page)
+            print-area-ids (print-area-ids-in-subtrees ids objects)
+            ids            (into #{}
+                                 (comp (map (d/getf objects))
+                                       (filter #(ctk/allow-duplicate? objects %))
+                                       (map :id))
+                                 ids)]
+        (when (and (seq ids) (empty? print-area-ids))
           (let [obj             (get objects (first ids))
                 delta           (if move-delta?
                                   (calc-duplicate-delta obj state objects)
@@ -494,7 +490,7 @@
                 library-data    (dsh/lookup-file-data state file-id)
 
                 changes         (-> (pcb/empty-changes it)
-                                    (cll/generate-duplicate-changes objects page ids delta libraries library-data file-id)
+                                    (cll/generate-duplicate-changes objects page ids delta libraries library-data file-id {:alt-duplication? alt-duplication?})
                                     (cll/generate-duplicate-changes-update-indices objects ids))
 
                 tags            (or (:tags changes) #{})
@@ -522,6 +518,7 @@
                             (let [shape       (get objects shape-id)
                                   parent-type (cfh/get-shape-type objects (:parent-id shape))
                                   external-lib? (not= file-id (:component-file shape))
+                                  component     (ctn/get-component-from-shape shape libraries)
                                   origin        "workspace:duplicate-shapes"]
 
                               ;; NOTE: we don't emit the create-shape event all the time for
@@ -532,7 +529,8 @@
                                            ::ev/origin origin
                                            :is-external-library external-lib?
                                            :type (get shape :type)
-                                           :parent-type parent-type})
+                                           :parent-type parent-type
+                                           :is-variant (ctk/is-variant? component)})
                                 (if (cfh/has-layout? objects (:parent-id shape))
                                   (ev/event {::ev/name "layout-add-element"
                                              ::ev/origin origin
@@ -563,21 +561,10 @@
      ptk/WatchEvent
      (watch [_ state _]
        (when (or (not move-delta?) (nil? (get-in state [:workspace-local :transform])))
-         (let [page-id (or (:current-page-id state) nil)
-               objects (dsh/lookup-page-objects state page-id)
-               selected (dsh/lookup-selected state)
-               ;; Find any print-area ids in the current selection
-               print-area-ids (->> selected
-                                   (filter (fn [id]
-                                             (let [shape (get objects id)]
-                                               (and shape (dsh/shape-is-print-area? shape)))))
-                                   (into []))]
-           (if (seq print-area-ids)
-             (do
-               (js/console.debug "duplicate-selected: aborting because selection contains print-area" (clj->js print-area-ids))
-               ;; abort the whole operation
-               (rx/empty))
-             ;; otherwise proceed with duplicate
+         (let [objects        (dsh/lookup-page-objects state)
+               selected       (dsh/lookup-selected state)
+               print-area-ids (print-area-ids-in-subtrees selected objects)]
+           (when (empty? print-area-ids)
              (rx/of (duplicate-shapes selected
                                       :move-delta? move-delta?
                                       :alt-duplication? alt-duplication?)))))))))
@@ -636,24 +623,28 @@
                 (assoc :workspace-pre-focus (:workspace-local state)))
             state))))
 
+    ptk/EffectEvent
+    (effect [_ state _]
+      (dwvw/maybe-sync-workspace-local-viewport! state))
+
     ptk/WatchEvent
     (watch [_ state stream]
       (let [stopper (rx/filter #(or (= ::toggle-focus-mode (ptk/type %))
-                                    (= :app.main.data.workspace/finalize-page (ptk/type %))) stream)]
+                                    (= ::dwpg/finalize-page (ptk/type %))) stream)]
         (when (d/not-empty? (:workspace-focus-selected state))
-          (rx/merge
-           (rx/of dwz/zoom-to-selected-shape
-                  (deselect-all))
-           (->> (rx/from-atom refs/workspace-page-objects {:emit-current-value? true})
-                (rx/take-until stopper)
-                (rx/map (comp set keys))
-                (rx/buffer 2 1)
-                (rx/merge-map
-                ;; While focus is active, update it with any new and deleted shapes
-                 (fn [[old-keys new-keys]]
-                   (let [removed (set/difference old-keys new-keys)
-                         added (set/difference new-keys old-keys)]
+          (->> (rx/merge
+                (rx/of dwz/zoom-to-selected-shape
+                       (deselect-all))
+                (->> (rx/from-atom refs/workspace-page-objects {:emit-current-value? true})
+                     (rx/map (comp set keys))
+                     (rx/buffer 2 1)
+                     (rx/merge-map
+                      ;; While focus is active, update it with any new and deleted shapes
+                      (fn [[old-keys new-keys]]
+                        (let [removed (set/difference old-keys new-keys)
+                              added (set/difference new-keys old-keys)]
 
-                     (if (or (d/not-empty? added) (d/not-empty? removed))
-                       (rx/of (update-focus-shapes added removed))
-                       (rx/empty))))))))))))
+                          (if (or (d/not-empty? added) (d/not-empty? removed))
+                            (rx/of (update-focus-shapes added removed))
+                            (rx/empty)))))))
+               (rx/take-until stopper)))))))

@@ -2,14 +2,12 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.workspace.right-header
   (:require-macros [app.main.style :as stl])
   (:require
-   [app.main.data.common :as dcm]
    [app.main.data.event :as ev]
-   [app.main.data.modal :as modal]
    [app.main.data.shortcuts :as scd]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.drawing.common :as dwc]
@@ -19,12 +17,12 @@
    [app.main.store :as st]
    [app.main.ui.components.dropdown :refer [dropdown]]
    [app.main.ui.context :as ctx]
-   [app.main.ui.dashboard.team]
    [app.main.ui.ds.buttons.icon-button :refer [icon-button*]]
-   [app.main.ui.exports.assets :refer [export-progress-widget]]
+   [app.main.ui.ds.foundations.assets.icon :as i]
+   [app.main.ui.exports.assets :refer [progress-widget]]
    [app.main.ui.formats :as fmt]
-   [app.main.ui.icons :as i]
-   [app.main.ui.workspace.presence :refer [active-sessions]]
+   [app.main.ui.icons :as deprecated-icon]
+   [app.main.ui.workspace.presence :refer [active-sessions*]]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [okulary.core :as l]
@@ -83,12 +81,12 @@
          [:> icon-button* {:variant "ghost"
                            :aria-label (tr "shortcuts.decrease-zoom")
                            :on-click on-decrease
-                           :icon "remove"}]
+                           :icon i/remove}]
          [:p {:class (stl/css :zoom-text)} zoom]
          [:> icon-button* {:variant "ghost"
                            :aria-label (tr "shortcuts.increase-zoom")
                            :on-click on-increase
-                           :icon "add"}]]
+                           :icon i/add}]]
         [:button {:class (stl/css :reset-btn)
                   :on-click on-zoom-reset}
          (tr "workspace.header.reset-zoom")]]
@@ -110,10 +108,8 @@
 ;; --- Header Component
 
 (mf/defc right-header*
-  [{:keys [file layout page-id]}]
-  (let [file-id           (:id file)
-
-        threads-map       (mf/deref refs/comment-threads)
+  [{:keys [file-id layout]}]
+  (let [threads-map       (mf/deref refs/comment-threads)
 
         zoom              (mf/deref refs/selected-zoom)
         read-only?        (mf/use-ctx ctx/workspace-read-only?)
@@ -130,29 +126,12 @@
 
         input-ref         (mf/use-ref nil)
 
-        team              (mf/deref refs/team)
-        permissions       (get team :permissions)
-
         has-unread-comments?
         (mf/with-memo [threads-map file-id]
           (->> (vals threads-map)
                (some #(and (= (:file-id %) file-id)
                            (pos? (:count-unread-comments %))))
                (boolean)))
-
-        display-share-button?
-        (and (not (:is-default team))
-             (or (:is-admin permissions)
-                 (:is-owner permissions)))
-
-        nav-to-viewer
-        (mf/use-fn
-         (mf/deps file-id page-id)
-         (fn []
-           (let [params {:page-id page-id
-                         :file-id file-id
-                         :section "interactions"}]
-             (st/emit! (dcm/go-to-viewer params)))))
 
         active-comments
         (mf/use-fn
@@ -181,15 +160,7 @@
                        (dw/clear-edition-mode)))
 
            (st/emit! (-> (dwh/initialize-history)
-                         (vary-meta assoc ::ev/origin "workspace-header")))))
-
-        open-share-dialog
-        (mf/use-fn
-         (mf/deps team)
-         (fn []
-           (st/emit! (modal/show {:type :invite-members
-                                  :team team
-                                  :origin :workspace}))))]
+                         (vary-meta assoc ::ev/origin "workspace-header")))))]
 
     (mf/with-effect [editing?]
       (when ^boolean editing?
@@ -197,9 +168,9 @@
 
     [:div {:class (stl/css :workspace-header-right)}
      [:div {:class (stl/css :users-section)}
-      [:& active-sessions]]
+      [:> active-sessions*]]
 
-     [:& export-progress-widget]
+     [:& progress-widget]
 
      [:div {:class (stl/css :separator)}]
 
@@ -220,7 +191,7 @@
                 :on-click toggle-comments
                 :data-tool "comments"
                 :style {:position "relative"}}
-       i/comments
+       deprecated-icon/comments
        (when ^boolean has-unread-comments?
          [:div {:class (stl/css :unread)}])]]
 
@@ -232,17 +203,6 @@
           :class (stl/css-case :selected (contains? layout :document-history)
                                :history-button true)
           :on-click toggle-history}
-         i/history]])
+         deprecated-icon/history]])
 
-;;      (when display-share-button?
-;;        [:a {:class (stl/css :viewer-btn)
-;;             :title (tr "workspace.header.share")
-;;             :on-click open-share-dialog}
-;;         i/share])
-
-;;      [:a {:class (stl/css :viewer-btn)
-;;           :title (tr "workspace.header.viewer" (sc/get-tooltip :open-viewer))
-;;           :on-click nav-to-viewer}
-;;       i/play]
-      ]))
-
+     nil]))
