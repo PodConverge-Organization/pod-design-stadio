@@ -24,7 +24,6 @@
    [app.main.ui.workspace.sidebar.options.menus.bool :refer [bool-options*]]
    [app.main.ui.workspace.sidebar.options.menus.component :refer [component-menu*]]
    [app.main.ui.workspace.sidebar.options.menus.grid-cell :as grid-cell]
-   [app.main.ui.workspace.sidebar.options.menus.interactions :refer [interactions-menu*]]
    [app.main.ui.workspace.sidebar.options.menus.layout-container :as layout-container]
    [app.main.ui.workspace.sidebar.options.page :as page]
    [app.main.ui.workspace.sidebar.options.shapes.bool :as bool]
@@ -186,15 +185,15 @@
 
 (def ^:private options-tabs
   [{:label (tr "workspace.options.design")
-    :id "design"}
-   {:label (tr "workspace.options.prototype")
-    :id "prototype"}])
+    :id "design"}])
 
 (defn- effective-options-mode
   [options-mode]
-  (if (= options-mode :inspect)
-    :design
-    options-mode))
+  (case options-mode
+    :design :design
+    :prototype :design
+    :inspect :design
+    :design))
 
 (defn- on-option-tab-change
   [mode]
@@ -226,10 +225,6 @@
                           :selected (name effective-mode)
                           :class (stl/css :options-tab-switcher)}
         (case effective-mode
-          :prototype
-          [:div {:class (stl/css :element-options :interaction-options)}
-           [:> interactions-menu* {:shape (first shapes)}]]
-
           :design
           [:> design-menu* {:selected selected
                             :objects objects

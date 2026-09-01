@@ -16,6 +16,14 @@ PodConverge-specific tests protect durable product and integration behavior. Dat
 
 Production deploys prebuilt reviewed images rather than building release artifacts from a dirty production checkout.
 
+## Workspace options contract
+
+PodConverge intentionally exposes only the Design tab in the workspace right-hand options sidebar. The Prototype tab and interaction controls are not part of the user-facing options sidebar contract.
+
+This is a UI product boundary only. Underlying upstream Penpot prototype and interactions data structures remain globally compatible outside this sidebar boundary.
+
+Future Penpot upgrades must preserve the focused PodConverge workspace options regression test so the Prototype sidebar tab does not reappear unnoticed.
+
 ## Plugin navigation trust boundary
 
 Production Design Studio navigation messages may originate only from `https://plugin.podconverge.com` or `https://plugin-develop.podconverge.com`. The developer plugin remains developer-only and manually installed.
