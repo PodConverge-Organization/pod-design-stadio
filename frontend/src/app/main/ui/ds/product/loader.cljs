@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.ds.product.loader
   (:require-macros
@@ -27,12 +27,12 @@
   [{:keys [width height title] :rest props}]
   (let [class (stl/css :loader)
         props (mf/spread-props props
-               {:viewBox      "0 0 146 78"
-                :role         "status"
-                :width        width
-                :height       height
-                :xmlns        "http://www.w3.org/2000/svg"
-                :class        class})]
+                               {:viewBox      "0 0 146 78"
+                                :role         "status"
+                                :width        width
+                                :height       height
+                                :xmlns        "http://www.w3.org/2000/svg"
+                                :class        class})]
     [:> :svg props
      [:title title]
      [:g {:clip-path "url(#clip0_15276_77647)"}
@@ -57,15 +57,13 @@
               :class   "svg-elem-3"}]
       [:path {:d     "M141.989 27.4409C143.88 27.4409 145.421 28.9377 145.492 30.811V43.6558C145.424 45.4533 144.004 46.9038 142.219 47.019C135.09 46.9939 127.952 46.9055 120.822 46.9644C94.5268 46.6035 76.7993 44.6519 58.3809 35.0513C63.8605 33.1483 69.3805 31.6526 74.9453 30.4897C88.0152 27.7585 107.059 27.4651 122.159 27.4409H141.989Z"
               :fill  "#6A097D"
-              :class "svg-elem-4"}]
-      ]
+              :class "svg-elem-4"}]]
      [:defs
       [:clipPath {:id "clip0_15276_77647"}
        [:rect {:width  "145.5"
                :height "77.132"
                :fill   "white"
-               :class  "svg-elem-5"}]]]
-    ]))
+               :class  "svg-elem-5"}]]]]))
 
 (def ^:private schema:loader
   [:map

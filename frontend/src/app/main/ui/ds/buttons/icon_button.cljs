@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.ds.buttons.icon-button
   (:require-macros
@@ -16,19 +16,26 @@
 (def ^:private schema:icon-button
   [:map
    [:class {:optional true} :string]
+   [:tooltip-class {:optional true} [:maybe :string]]
+   [:type {:optional true} [:maybe [:enum "button" "submit" "reset"]]]
    [:icon-class {:optional true} :string]
+   [:icon-size {:optional true} [:maybe [:enum "s" "m" "l"]]]
    [:icon
     [:and :string [:fn #(contains? icon-list %)]]]
    [:aria-label :string]
+   [:tooltip-placement {:optional true}
+    [:maybe [:enum "top" "bottom" "left" "right" "top-right" "bottom-right" "bottom-left" "top-left"]]]
    [:variant {:optional true}
     [:maybe [:enum "primary" "secondary" "ghost" "destructive" "action"]]]])
 
 (mf/defc icon-button*
   {::mf/schema schema:icon-button
    ::mf/memo true}
-  [{:keys [class icon icon-class variant aria-label children] :rest props}]
+  [{:keys [class icon icon-class icon-size variant aria-label children tooltip-placement tooltip-class type] :rest props}]
   (let [variant
         (d/nilv variant "primary")
+
+        button-ref (mf/use-ref nil)
 
         tooltip-id
         (mf/use-id)
@@ -44,10 +51,15 @@
         props
         (mf/spread-props props
                          {:class [class button-class]
+                          :ref button-ref
+                          :type (d/nilv type "button")
                           :aria-labelledby tooltip-id})]
 
     [:> tooltip* {:content aria-label
+                  :class tooltip-class
+                  :trigger-ref button-ref
+                  :placement tooltip-placement
                   :id tooltip-id}
      [:> :button props
-      [:> icon* {:icon-id icon :aria-hidden true :class icon-class}]
+      [:> icon* {:icon-id icon :aria-hidden true :class icon-class :size icon-size}]
       children]]))

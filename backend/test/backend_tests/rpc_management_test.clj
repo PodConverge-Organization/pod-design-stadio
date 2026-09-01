@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns backend-tests.rpc-management-test
   (:require
@@ -19,7 +19,8 @@
    [backend-tests.storage-test :refer [configure-storage-backend]]
    [buddy.core.bytes :as b]
    [clojure.test :as t]
-   [datoteka.fs :as fs]))
+   [datoteka.fs :as fs]
+   [datoteka.io :as io]))
 
 (t/use-fixtures :once th/state-init)
 (t/use-fixtures :each th/database-reset)
@@ -39,7 +40,22 @@
     (t/is (nil? (:error out)))
     (:result out)))
 
-;; TODO: migrate to commands
+(t/deftest upload-tempfile-returns-fresh-object-for-same-content
+  (let [profile (th/create-profile* 1 {:is-active true})
+        path    (fs/create-tempfile :dir "/tmp/penpot" :prefix "test-upload-tempfile-")
+        _       (io/write* path "content")
+        params  {::th/type :upload-tempfile
+                 ::rpc/profile-id (:id profile)
+                 :content {:filename "export.png"
+                           :path path
+                           :mtype "image/png"
+                           :size 7}}
+        out1    (th/management-command! params)
+        out2    (th/management-command! params)]
+    (t/is (nil? (:error out1)))
+    (t/is (nil? (:error out2)))
+    (t/is (not= (get-in out1 [:result :id])
+                (get-in out2 [:result :id])))))
 
 (t/deftest duplicate-file
   (let [storage (-> (:app.storage/storage th/*system*)
@@ -233,15 +249,7 @@
           ;; check that the both files are equivalent
           (doseq [[fa fb] (map vector p1-files p2-files)]
             (t/is (not= (:id fa) (:id fb)))
-            (t/is (= (:name fa) (:name fb)))
-
-            (when (= (:id fa) (:id file1))
-              (t/is (false? (b/equals? (:data fa)
-                                       (:data fb)))))
-
-            (when (= (:id fa) (:id file2))
-              (t/is (false? (b/equals? (:data fa)
-                                       (:data fb)))))))))))
+            (t/is (= (:name fa) (:name fb)))))))))
 
 (t/deftest duplicate-project-with-deleted-files
   (let [storage (-> (:app.storage/storage th/*system*)
@@ -297,15 +305,7 @@
           ;; check that the both files are equivalent
           (doseq [[fa fb] (map vector (rest p1-files) p2-files)]
             (t/is (not= (:id fa) (:id fb)))
-            (t/is (= (:name fa) (:name fb)))
-
-            (when (= (:id fa) (:id file1))
-              (t/is (false? (b/equals? (:data fa)
-                                       (:data fb)))))
-
-            (when (= (:id fa) (:id file2))
-              (t/is (false? (b/equals? (:data fa)
-                                       (:data fb)))))))))))
+            (t/is (= (:name fa) (:name fb)))))))))
 
 (t/deftest move-file-on-same-team
   (let [profile  (th/create-profile* 1 {:is-active true})

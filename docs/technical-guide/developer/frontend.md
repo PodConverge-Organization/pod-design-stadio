@@ -50,6 +50,68 @@ continues to override the PodConverge baseline for subsequent text creation.
 The shared Penpot text fallback remains `14` for backward compatibility with
 existing documents, legacy content, and default typography behavior.
 
+## PodConverge Design Studio Session Recovery
+
+Design Studio can be configured to recover an expired Design Studio session
+through the Pod frontend bridge. The runtime-only setting is
+`PENPOT_DESIGN_STUDIO_RECOVERY_URI`; the expected production endpoint is
+`https://app.podconverge.com/auth/design-studio/recover`.
+
+The value is wired at runtime through the frontend container environment, the
+nginx entrypoint, `config.js`, `globalThis.penpotDesignStudioRecoveryURI`, and
+`app.config/design-studio-recovery-uri`. Do not hardcode the production URI in
+ClojureScript or Compose.
+
+Automatic recovery applies only to workspace, dashboard, and settings route
+families. Viewer/share routes are excluded and keep local Penpot behavior.
+Recovery redirects set `returnTo` to the exact current Design Studio href,
+including query and hash state.
+
+The browser stores one sessionStorage guard per tab. The guard is marked
+synchronously before redirecting, prevents a second automatic redirect while
+the user remains anonymous, and is cleared after a later authenticated profile
+result. Missing, blank, malformed, non-HTTP(S), or credential-bearing recovery
+URIs fail closed locally.
+
+Runtime authentication recovery is limited to the canonical backend session
+marker `{:type :authentication :code :authentication-required}` on protected
+routes. Generic/local authentication errors, including access-denied/team-access
+flows, stay local so request-access UX is preserved. The Pod frontend bridge
+owns session reissue; Design Studio must not duplicate backend or session
+reissue logic.
+
+## PodConverge Inspect/Code boundary
+
+PodConverge Design Studio intentionally suppresses user-facing Inspect/Code
+entry points. Direct or stale viewer `:inspect` state falls back to
+interactions, and stale workspace `:inspect` options mode falls back to Design.
+Prototype remains available in workspace options.
+
+This is a product UI boundary, not removal of generic compatibility data. The
+viewer share-link Inspect permission selector is hidden, but the `who-inspect`
+field remains part of the share-link contract and must not be removed solely
+because Inspect UI is hidden.
+
+## PodConverge Plugin Runtime Boundary
+
+Penpot 2.17.1 uses the official root plugin runtime source at
+`plugins/libs/plugins-runtime`. PodConverge custom frame behavior belongs in
+that runtime source, not in the old `frontend/vendor/penpot-plugins` tree or a
+compiled `frontend/patches/@penpot__plugins-runtime` patch.
+
+PodConverge removes the destructive visible plugin frame Close/X control. The
+frame header exposes a Minimize/Maximize toggle instead. Minimizing keeps the
+same plugin iframe and runtime mounted, preserves the plugin state, and
+restores the expanded frame dimensions and resize/overflow styles on maximize.
+If runtime code calls modal resize while minimized, the frame remains collapsed
+but the requested size becomes the next restored expanded size.
+
+The plugin iframe remains sandboxed without `allow-top-navigation` or
+`allow-top-navigation-by-user-activation`. Same-tab PodConverge app navigation
+is handled only through the parent navigation bridge, which separately checks
+the Design Studio environment, plugin sender origin, active modal iframe
+`contentWindow`, iframe source origin, and destination allowlist.
+
 ## UI
 
 Please refer to the [UI Guide](/technical-guide/developer/ui) to learn about implementing UI components and our design system.
@@ -259,7 +321,7 @@ repository:
 
 ```bash
 # cd <repo>/frontend
-yarn run validate-translations
+pnpm run translations
 ```
 
 At Penpot core team we maintain manually the english and spanish .po files. All
@@ -350,7 +412,7 @@ Ensure your development environment docker image is up to date.
 This is not required, but it may be convenient to compile Penpot in release mode before running the tests. This way they will be much quicker and stable. For this, go to the frontend window in the tmux session (<code class="language-bash">Ctrl + b 1</code>), interrupt the watch process with <code class="language-bash">Ctrl + C</code> and type:
 
 ```bash
-yarn run build:app
+./scripts/build
 ```
 
 Obviously, in this mode if you make changes to the source code, you will need to repeat the build manually each time. It may be useful to use wath mode when debugging a single test, and use release mode to run all the suite.
@@ -370,17 +432,17 @@ Here's how to run the tests with a headless browser (i.e. within the terminal, n
 cd penpot/frontend
 ```
 
-3. Run the tests with <code class="language-bash">yarn</code>:
+3. Run the tests with <code class="language-bash">pnpm</code>:
 
 ```bash
-yarn test:e2e
+pnpm run test:e2e
 ```
 
 > 💡 **TIP:** By default, the tests will _not_ run in parallel. You can set the amount of workers to run the tests with <code class="language-bash">--workers</code>. Note that, depending on your machine, this might make some tests flaky.
 
 ```bash
 # run in parallel with 4 workers
-yarn test:e2e --workers 4
+pnpm run test:e2e --workers 4
 ```
 
 #### Running the tests in Chromium
@@ -398,7 +460,7 @@ npx playwright test --ui
 
 > ❗️ **IMPORTANT**: You might need to [install Playwright's browsers and dependencies](https://playwright.dev/docs/intro) in your host machine with: <code class="language-bash">npx playwright install --with-deps</code>. In case you are using a Linux distribution other than Ubuntu, [you might need to install the dependencies manually](https://github.com/microsoft/playwright/issues/11122).
 
-> You will also need yarn in your host nodejs. For this, do <code class="language-bash">corepack enable</code> and then just <code class="language-bash">yarn</code>.
+> You will also need pnpm in your host nodejs. For this, do <code class="language-bash">corepack enable</code> and then just <code class="language-bash">pnpm</code>.
 
 ### How to write a test
 

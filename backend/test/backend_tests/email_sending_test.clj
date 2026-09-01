@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns backend-tests.email-sending-test
   (:require
@@ -22,4 +22,4 @@
     (t/is (contains? result :body))
     (t/is (contains? result :to))
     #_(t/is (contains? result :reply-to))
-    (t/is (vector? (:body result)))))
+    (t/is (map? (:body result)))))

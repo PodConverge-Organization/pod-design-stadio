@@ -2,17 +2,20 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.data.workspace.tokens.propagation
   (:require
+   [app.common.data :as d]
    [app.common.files.helpers :as cfh]
    [app.common.logging :as l]
    [app.common.time :as ct]
    [app.common.types.token :as ctt]
    [app.common.types.tokens-lib :as ctob]
+   [app.config :as cf]
    [app.main.data.helpers :as dsh]
    [app.main.data.style-dictionary :as sd]
+   [app.main.data.tokenscript :as ts]
    [app.main.data.workspace.shapes :as dwsh]
    [app.main.data.workspace.thumbnails :as dwt]
    [app.main.data.workspace.tokens.application :as dwta]
@@ -22,36 +25,8 @@
    [clojure.set :as set]
    [potok.v2.core :as ptk]))
 
-;; Constants -------------------------------------------------------------------
-
-(def ^:private filter-existing-values? false)
-
-(def ^:private attributes->shape-update
-  {ctt/border-radius-keys dwta/update-shape-radius-for-corners
-   ctt/color-keys dwta/update-fill-stroke
-   ctt/stroke-width-keys dwta/update-stroke-width
-   ctt/sizing-keys dwta/update-shape-dimensions
-   ctt/opacity-keys dwta/update-opacity
-   #{:line-height} dwta/update-line-height
-   #{:font-size} dwta/update-font-size
-   #{:letter-spacing} dwta/update-letter-spacing
-   #{:font-family} dwta/update-font-family
-   #{:text-case} dwta/update-text-case
-   #{:text-decoration} dwta/update-text-decoration
-   #{:font-weight} dwta/update-font-weight
-   #{:x :y} dwta/update-shape-position
-   #{:p1 :p2 :p3 :p4} dwta/update-layout-padding
-   #{:m1 :m2 :m3 :m4} dwta/update-layout-item-margin
-   #{:column-gap :row-gap} dwta/update-layout-spacing
-   #{:width :height} dwta/update-shape-dimensions
-   #{:layout-item-min-w :layout-item-min-h :layout-item-max-w :layout-item-max-h} dwta/update-layout-sizing-limits
-   ctt/rotation-keys dwta/update-rotation})
-
-(def attribute-actions-map
-  (reduce
-   (fn [acc [ks action]]
-     (into acc (map (fn [k] [k action]) ks)))
-   {} attributes->shape-update))
+;; Change this to :info :debug or :trace to debug this module, or :warn to reset to default
+(l/set-level! :warn)
 
 ;; Helpers ---------------------------------------------------------------------
 
@@ -65,6 +40,23 @@
      :else b))
   ([a b & rest]
    (reduce deep-merge a (cons b rest))))
+
+(defn- flatten-set-keyed-map
+  "Flattens a map where the keys are sets of keywords."
+  [m into-m]
+  (reduce
+   (fn [acc [ks action]]
+     (into acc (map (fn [k] [k action]) ks)))
+   into-m m))
+
+;; Constants -------------------------------------------------------------------
+
+(def ^:private filter-existing-values? false)
+
+(def ^:private attributes->shape-update dwta/attributes->shape-update)
+
+(def ^:private attribute-actions-map
+  (flatten-set-keyed-map attributes->shape-update {}))
 
 ;; Data flows ------------------------------------------------------------------
 
@@ -161,7 +153,10 @@
                   (collect-shapes-update-info resolved-tokens (:objects page))
 
                   actions
-                  (actionize-shapes-update-info page-id attrs)]
+                  (actionize-shapes-update-info page-id attrs)
+
+                  ;; Composed updates return observables and need to be executed differently
+                  {:keys [observable normal]} (group-by #(if (rx/observable? %) :observable :normal) actions)]
 
               (l/inf :status "PROGRESS"
                      :hint "propagate-tokens"
@@ -170,7 +165,9 @@
                      ::l/sync? true)
 
               (rx/merge
-               (rx/from actions)
+               (when (seq observable) (apply rx/merge observable))
+               (when (seq normal) (rx/concat-all (rx/of normal)))
+
                (->> (rx/from frame-ids)
                     (rx/mapcat (fn [frame-id]
                                  (rx/of (dwt/clear-thumbnail file-id page-id frame-id "frame")
@@ -191,13 +188,27 @@
   (ptk/reify ::propagate-workspace-tokens
     ptk/WatchEvent
     (watch [_ state _]
-      (when-let [tokens-lib (-> (dsh/lookup-file-data state)
-                                (get :tokens-lib))]
-        (->> (ctob/get-tokens-in-active-sets tokens-lib)
-             (sd/resolve-tokens)
-             (rx/mapcat (fn [sd-tokens]
-                          (let [undo-id (js/Symbol)]
-                            (rx/concat
-                             (rx/of (dwu/start-undo-transaction undo-id :timeout false))
-                             (propagate-tokens state sd-tokens)
-                             (rx/of (dwu/commit-undo-transaction undo-id)))))))))))
+      (when-let [tokens-tree (-> (dsh/lookup-file-data state)
+                                 (get :tokens-lib)
+                                 (ctob/get-tokens-in-active-sets))]
+        (->> (if (contains? cf/flags :tokenscript)
+               (rx/of (-> (ts/resolve-tokens tokens-tree)
+                          (d/update-vals #(update % :resolved-value ts/tokenscript-symbols->penpot-unit))))
+               (sd/resolve-tokens tokens-tree))
+             (rx/mapcat
+              (fn [sd-tokens]
+                (let [undo-id (js/Symbol)]
+                  (rx/concat
+                   (rx/of (dwu/start-undo-transaction undo-id :timeout false))
+
+                   ;; FIXME: now the tokens propagations is done by accumulating the update-shapes
+                   ;; into a single commit-changes. This is not really the best way, the token application
+                   ;; should be done with a changes_builder and sending only one `commit-changes` instead
+                   ;; of creating lots of `update-shapes`.
+                   (rx/of (dwsh/update-shapes-buffer-start))
+                   (->> (propagate-tokens state sd-tokens)
+                        (rx/catch #(rx/concat
+                                    (rx/of (dwsh/update-shapes-buffer-stop))
+                                    (rx/throw %))))
+                   (rx/of (dwsh/update-shapes-buffer-stop))
+                   (rx/of (dwu/commit-undo-transaction undo-id)))))))))))

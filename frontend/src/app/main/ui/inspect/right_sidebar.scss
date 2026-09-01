@@ -2,121 +2,137 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@import "refactor/common-refactor.scss";
+@use "ds/typography.scss" as *;
+@use "ds/_sizes.scss" as *;
+@use "refactor/common-refactor.scss" as deprecated;
+@use "ds/_utils.scss" as *;
 
 .settings-bar-right {
-  min-width: $s-252;
-  width: 100%;
-  height: 100vh;
+  min-inline-size: px2rem(252);
+  inline-size: 100%;
+  block-size: 100vh;
   position: relative;
-  left: unset;
-  right: unset;
+  inset-inline-start: unset;
+  inset-inline-end: unset;
   grid-area: right-sidebar;
   overflow: hidden;
 
   &.viewer-code {
-    height: calc(100vh - $s-48);
+    block-size: calc(100vh - $sz-48);
   }
 }
 
-.viewer-code {
-  padding-inline-start: $s-8;
-}
-
 .tool-windows {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: $s-8;
-  padding-left: var(--sp-m);
+  block-size: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--sp-s);
 }
 
-.shape-row {
+.shape-info {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: $s-8;
+  gap: var(--sp-s);
   align-items: center;
-  height: $s-32;
+  block-size: $sz-32;
+  padding-inline-start: var(--sp-m);
 }
 
-.shape-row-subtitle {
-  height: fit-content;
+.shape-info-subtitle {
+  block-size: fit-content;
   align-items: flex-start;
 }
 
 .layers-icon,
 .shape-icon {
-  @include flexCenter;
-  height: $s-32;
+  --icon-stroke-color: var(--color-foreground-primary);
 
-  svg {
-    @extend .button-icon-small;
-    stroke: var(--icon-foreground);
-  }
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  block-size: $sz-32;
 }
 
 .layer-title {
-  @include bodySmallTypography;
-  @include textEllipsis;
-  height: $s-32;
-  padding: $s-8 0;
+  @include deprecated.body-small-typography;
+  @include deprecated.text-ellipsis;
+
+  block-size: $sz-32;
+  padding: var(--sp-s) 0;
   color: var(--color-foreground-primary);
 }
 
 .layer-title-with-subtitle {
-  height: fit-content;
-  padding-bottom: 0;
+  block-size: fit-content;
+  padding-block-end: 0;
 }
 
 .layer-subtitle {
-  @include bodySmallTypography;
-  @include textEllipsis;
+  @include deprecated.body-small-typography;
+  @include deprecated.text-ellipsis;
+
   color: var(--assets-item-name-foreground-color-rest);
 }
 
 .empty {
   display: flex;
   flex-direction: column;
+  gap: var(--sp-xxxl);
+  margin: var(--sp-xxxl) auto;
+  inline-size: $sz-200;
+}
+
+.empty-button {
+  display: flex;
+  justify-content: center;
+}
+
+.inspect-tab-switcher {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: $s-40;
-  padding-top: $s-24;
+  padding: var(--sp-s) var(--sp-m) var(--sp-s) var(--sp-m);
+  gap: var(--sp-m);
 }
 
-.code-info,
-.help-info {
-  @include flexColumn;
+.inspect-tab-switcher-label {
+  @include use-typography("body-medium");
+
+  color: var(--color-foreground-primary);
+  flex: 0 1 40%;
+}
+
+.inspect-tab-switcher-controls {
+  display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: $s-12;
-  margin-right: $s-8;
+  flex: 1;
+  gap: var(--sp-s);
+  justify-content: flex-end;
 }
 
-.placeholder-icon {
-  @extend .empty-icon;
+.inspect-tab-switcher-controls-color-space {
+  // 65px is the minimum size of the switcher to avoid text ellipsis on the options
+  flex: 0 0 65px;
 }
 
-.placeholder-label {
-  @include bodySmallTypography;
-  text-align: center;
-  width: $s-200;
-  color: var(--empty-message-foreground-color);
+.inspect-tab-switcher-controls-color-space-select {
+  justify-self: end;
 }
 
-.more-info-btn {
-  @extend .button-secondary;
-  @include uppercaseTitleTipography;
-  height: $s-32;
-  padding: $s-8 $s-24;
+.inspect-tab-switcher-controls-tab {
+  // 110px is the minimum size of the switcher to avoid text ellipsis on the options
+  flex: 0 0 110px;
 }
 
 .inspect-content {
-  flex: 1;
   overflow: hidden;
 }
 
 .viewer-tab-switcher {
   --tabs-nav-padding-inline-start: 0;
   --tabs-nav-padding-inline-end: var(--sp-m);
+
+  overflow: auto;
 }

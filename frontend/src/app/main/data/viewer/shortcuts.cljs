@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.data.viewer.shortcuts
   (:require
@@ -51,11 +51,6 @@
                         :command ["right" "down" "enter" "pagedown" "space"]
                         :subsections [:general-viewer]
                         :fn #(st/emit! dv/select-next-frame)}
-
-   :open-inspect       {:tooltip "G I"
-                        :command "g i"
-                        :subsections [:navigation-viewer]
-                        :fn #(st/emit! (dv/go-to-section :inspect))}
 
    :open-comments      {:tooltip "G C"
                         :command "g c"

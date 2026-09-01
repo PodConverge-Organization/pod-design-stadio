@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.viewer.share-link
   (:require-macros [app.main.style :as stl])
@@ -20,11 +20,10 @@
    [app.main.router :as rt]
    [app.main.store :as st]
    [app.main.ui.components.select :refer [select]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
+   [app.util.clipboard :as clipboard]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
-   [app.util.webapi :as wapi]
-   [potok.v2.core :as ptk]
    [rumext.v2 :as mf]))
 
 (log/set-level! :warn)
@@ -126,20 +125,20 @@
           (let [params (prepare-params options)
                 params (assoc params :file-id (:id file))]
             (st/emit! (dc/create-share-link params)
-                      (ptk/event ::ev/event {::ev/name "create-share-link"
-                                             ::ev/origin "viewer"
-                                             :can-comment (:who-comment params)
-                                             :can-inspect-code (:who-inspect params)}))))
+                      (ev/event {::ev/name "create-share-link"
+                                 ::ev/origin "viewer"
+                                 :can-comment (:who-comment params)
+                                 :can-inspect-code (:who-inspect params)}))))
 
         copy-link
         (fn [_]
-          (wapi/write-to-clipboard current-link)
+          (clipboard/to-clipboard current-link)
           (st/emit! (ntf/show {:level :info
                                :type :toast
                                :content (tr "common.share-link.link-copied-success")
                                :timeout 1000})
-                    (ptk/event ::ev/event {::ev/name "copy-share-link"
-                                           ::ev/origin "viewer"})))
+                    (ev/event {::ev/name "copy-share-link"
+                               ::ev/origin "viewer"})))
 
         try-delete-link
         (fn [_]
@@ -156,11 +155,6 @@
         (fn [_]
           (swap! perms-visible* not))
 
-        on-inspect-change
-        (fn [value]
-          (reset! confirm* false)
-          (swap! options* assoc :who-inspect value))
-
         on-comment-change
         (fn [value]
           (reset! confirm* false)
@@ -174,7 +168,7 @@
        [:button {:class (stl/css :modal-close-button)
                  :on-click on-close
                  :title (tr "labels.close")}
-        i/close]]
+        deprecated-icon/close]]
       [:div {:class (stl/css :modal-content)}
        [:div {:class (stl/css :share-link-section)}
         (when (and (not confirm?) (some? current-link))
@@ -188,7 +182,7 @@
            [:button {:class (stl/css :copy-button)
                      :title (tr "viewer.header.share.copy-link")
                      :on-click copy-link}
-            i/clipboard]])
+            deprecated-icon/clipboard]])
 
         [:div {:class (stl/css :hint-wrapper)}
          (when (not ^boolean confirm?)
@@ -229,7 +223,7 @@
                     :on-click toggle-perms-visibility}
            [:span {:class (stl/css-case :icon true
                                         :rotated perms-visible?)}
-            i/arrow]
+            deprecated-icon/arrow]
            (tr "common.share-link.manage-ops")]
 
           (when ^boolean perms-visible?
@@ -249,7 +243,7 @@
                              :class (stl/css-case :global/checked true)}
 
                      [:span  {:class (stl/css :checked)}
-                      i/status-tick]
+                      deprecated-icon/status-tick]
 
                      (:name current-page)]
 
@@ -267,7 +261,7 @@
                                :class (stl/css :select-all-label)}
                        [:span {:class (stl/css-case :global/checked all-selected?)}
                         (when all-selected?
-                          i/status-tick)]
+                          deprecated-icon/status-tick)]
                        (tr "common.share-link.view-all")
                        [:input {:type "checkbox"
                                 :id "view-all"
@@ -285,7 +279,7 @@
                         [:label {:for (dm/str "page-" id)}
                          [:span {:class (stl/css-case :global/checked (contains? selected id))}
                           (when (contains? selected id)
-                            i/status-tick)]
+                            deprecated-icon/status-tick)]
                          name
                          (when (= current-page-id id)
                            [:div {:class (stl/css :current-tag)} (dm/str  " " (tr "common.share-link.current-tag"))])
@@ -304,17 +298,6 @@
                  :default-value (dm/str (:who-comment options))
                  :options [{:value "team" :label (tr "common.share-link.team-members")}
                            {:value "all" :label (tr "common.share-link.all-users")}]
-                 :on-change on-comment-change}]]]
-             [:div {:class (stl/css :inspect-mode)}
-              [:div {:class (stl/css :subtitle)}
-               (tr "common.share-link.permissions-can-inspect")]
-              [:div {:class (stl/css :items)}
-               [:& select
-                {:class (stl/css :who-inspect-select)
-                 :default-value (dm/str (:who-inspect options))
-                 :options [{:value "team" :label (tr "common.share-link.team-members")}
-                           {:value "all" :label (tr "common.share-link.all-users")}]
-                 :on-change on-inspect-change}]]]])])]]]))
-
+                 :on-change on-comment-change}]]]])])]]]))
 
 

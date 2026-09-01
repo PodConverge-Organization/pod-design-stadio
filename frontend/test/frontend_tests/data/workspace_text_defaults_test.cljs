@@ -6,8 +6,8 @@
 
 (ns frontend-tests.data.workspace-text-defaults-test
   (:require
-   [app.common.test-helpers.files :as cthf]
    [app.common.math :as mth]
+   [app.common.test-helpers.files :as cthf]
    [app.common.types.shape :as cts]
    [app.common.types.text :as txt]
    [app.common.uuid :as uuid]
@@ -15,8 +15,8 @@
    [app.main.data.workspace.text-defaults :as text-defaults]
    [app.main.data.workspace.texts :as dwt]
    [app.main.ui.workspace.shapes.text.v2-editor :as v2-editor]
-   [app.util.text.content :as content]
    [app.util.text-editor :as ted]
+   [app.util.text.content :as content]
    [cljs.test :as t :include-macros true]
    [frontend-tests.helpers.state :as ths]
    [potok.v2.core :as ptk]))
@@ -161,8 +161,9 @@
         loaded           (atom nil)
         instance         #js {}]
     (with-redefs [dwt/create-editor
-                  (fn [editor-node options]
+                  (fn [editor-node canvas-node ^js options]
                     (reset! created {:editor-node editor-node
+                                     :canvas-node canvas-node
                                      :style-defaults (js->clj (.-styleDefaults options))})
                     instance)
 

@@ -2,22 +2,24 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.data.profile
   (:require
    [app.common.data :as d]
    [app.common.schema :as sm]
-   [app.common.spec :as us]
+   [app.common.types.profile :refer [schema:profile]]
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.main.data.event :as ev]
    [app.main.data.media :as di]
    [app.main.data.notifications :as ntf]
    [app.main.data.team :as-alias dtm]
+   [app.main.features :as features]
    [app.main.repo :as rp]
    [app.main.router :as rt]
    [app.plugins.register :as plugins.register]
+   [app.util.http :as http]
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.storage :as storage]
    [beicon.v2.core :as rx]
@@ -26,16 +28,6 @@
 (declare update-profile-props)
 
 ;; --- SCHEMAS
-
-(def ^:private
-  schema:profile
-  [:map {:title "Profile"}
-   [:id ::sm/uuid]
-   [:created-at {:optional true} :any]
-   [:fullname {:optional true} :string]
-   [:email {:optional true} :string]
-   [:lang {:optional true} :string]
-   [:theme {:optional true} :string]])
 
 (def check-profile
   (sm/check-fn schema:profile))
@@ -62,11 +54,16 @@
           (assoc :profile-id id)
           (assoc :profile profile)))
 
+    ptk/WatchEvent
+    (watch [_ state _]
+      (let [profile (:profile state)]
+        (->> (rx/from (i18n/set-locale (:lang profile)))
+             (rx/ignore))))
+
     ptk/EffectEvent
     (effect [_ state _]
       (let [profile (:profile state)]
         (swap! storage/user assoc :profile profile)
-        (i18n/set-locale! (:lang profile))
         (plugins.register/init)))))
 
 (def profile-fetched?
@@ -85,12 +82,25 @@
         (rx/of (rt/nav-raw :href href)))
       (rx/throw cause))))
 
+(defn on-fetch-profile-success
+  [profile]
+  (if (and (contains? cf/flags :subscriptions)
+           (is-authenticated? profile))
+    (->> (rp/cmd! :get-subscription-usage {})
+         (rx/map (fn [{:keys [editors]}]
+                   (update-in profile [:props :subscription] assoc :editors editors)))
+         (rx/catch (fn [cause]
+                     (js/console.error "unexpected error on obtaining subscription usage" cause)
+                     (rx/of profile))))
+    (rx/of profile)))
+
 (defn fetch-profile
   []
   (ptk/reify ::fetch-profile
     ptk/WatchEvent
     (watch [_ _ _]
       (->> (rp/cmd! :get-profile)
+           (rx/mapcat on-fetch-profile-success)
            (rx/map (partial ptk/data-event ::profile-fetched))
            (rx/catch on-fetch-profile-exception)))))
 
@@ -143,10 +153,10 @@
 
            (when (not= (:theme profile)
                        (:theme profile'))
-             (rx/of (ptk/data-event ::ev/event
-                                    {::ev/name "activate-theme"
-                                     ::ev/origin "settings"
-                                     :theme (:theme profile)})))))))))
+             (rx/of (ev/event
+                     {::ev/name "activate-theme"
+                      ::ev/origin "settings"
+                      :theme (:theme profile)})))))))))
 
 ;; --- Toggle Theme
 
@@ -177,9 +187,9 @@
     (watch [it state _]
       (let [profile (get state :profile)
             origin  (::ev/origin (meta it))]
-        (rx/of (ptk/data-event ::ev/event {:theme (:theme profile)
-                                           ::ev/name "activate-theme"
-                                           ::ev/origin origin})
+        (rx/of (ev/event {:theme (:theme profile)
+                          ::ev/name "activate-theme"
+                          ::ev/origin origin})
                (persist-profile))))))
 
 ;; --- Request Email Change
@@ -282,8 +292,13 @@
     ;; FIXME
     ptk/WatchEvent
     (watch [_ _ _]
-      (->> (rp/cmd! :update-profile-props {:props props})
-           (rx/map (constantly (refresh-profile)))))))
+      (let [refresh-profile (->> (rp/cmd! :update-profile-props {:props props})
+                                 (rx/map (constantly (refresh-profile))))
+            recompute       (when (contains? props :renderer)
+                              (rx/of (features/recompute-features)))]
+        (if recompute
+          (rx/concat recompute refresh-profile)
+          refresh-profile)))))
 
 (defn mark-onboarding-as-viewed
   ([] (mark-onboarding-as-viewed nil))
@@ -339,6 +354,23 @@
              (rx/map (constantly (refresh-profile)))
              (rx/catch on-error))))))
 
+(def delete-photo
+  (ptk/reify ::delete-photo
+    ev/Event
+    (-data [_] {})
+
+    ptk/UpdateEvent
+    (update [_ state]
+      (assoc-in state [:profile :photo-id] nil))
+
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (->> (rp/cmd! :delete-profile-photo {})
+           (rx/map (constantly (refresh-profile)))
+           (rx/catch (fn [cause]
+                       (js/console.error "delete-photo failed" cause)
+                       (rx/of (refresh-profile))))))))
+
 (defn fetch-file-comments-users
   [{:keys [team-id]}]
   (assert (uuid? team-id) "expected a valid uuid for `team-id`")
@@ -355,8 +387,18 @@
 
 ;; --- EVENT: request-account-deletion
 
-(def profile-deleted?
+(def profile-deleted-event?
   (ptk/type? ::profile-deleted))
+
+(defn- delete-subscription
+  []
+  (if (contains? cf/flags :subscriptions)
+    (->> (http/fetch {:uri "/payments/subscriptions/delete"
+                      :credentials "include"
+                      :method :get})
+         (rx/map (constantly nil))
+         (rx/catch #(rx/empty)))
+    (rx/empty)))
 
 (defn request-account-deletion
   [params]
@@ -365,13 +407,17 @@
     (watch [_ _ _]
       (let [{:keys [on-error on-success]
              :or {on-error rx/throw
-                  on-success identity}} (meta params)]
-        (->> (rp/cmd! :delete-profile {})
-             (rx/tap on-success)
-             (rx/map (fn [_]
-                       (ptk/data-event ::profile-deleted params)))
-             (rx/catch on-error)
-             (rx/delay-at-least 300))))))
+                  on-success identity}}
+            (meta params)]
+
+        (rx/concat
+         (delete-subscription)
+         (->> (rp/cmd! :delete-profile {})
+              (rx/tap on-success)
+              (rx/map (fn [_]
+                        (ptk/data-event ::profile-deleted params)))
+              (rx/catch on-error)
+              (rx/delay-at-least 300)))))))
 
 ;; --- EVENT: request-profile-recovery
 
@@ -391,7 +437,8 @@
       (watch [_ _ _]
         (let [{:keys [on-error on-success]
                :or {on-error rx/throw
-                    on-success identity}} (meta data)]
+                    on-success identity}}
+              (meta data)]
 
           (->> (rp/cmd! :request-profile-recovery data)
                (rx/tap on-success)
@@ -426,6 +473,9 @@
 (defn access-tokens-fetched
   [access-tokens]
   (ptk/reify ::access-tokens-fetched
+    IDeref
+    (-deref [_] access-tokens)
+
     ptk/UpdateEvent
     (update [_ state]
       (assoc state :access-tokens access-tokens))))
@@ -440,7 +490,7 @@
 
 ;; --- EVENT: create-access-token
 
-(defn access-token-created
+(defn- access-token-created
   [access-token]
   (ptk/reify ::access-token-created
     ptk/UpdateEvent
@@ -448,24 +498,35 @@
       (assoc state :access-token-created access-token))))
 
 (defn create-access-token
-  [{:keys [] :as params}]
+  [params]
   (ptk/reify ::create-access-token
     ptk/WatchEvent
     (watch [_ _ _]
       (let [{:keys [on-success on-error]
              :or {on-success identity
-                  on-error rx/throw}} (meta params)]
+                  on-error rx/throw}}
+            (meta params)]
+
         (->> (rp/cmd! :create-access-token params)
-             (rx/map access-token-created)
              (rx/tap on-success)
+             (rx/mapcat (fn [token]
+                          (rx/of (access-token-created token)
+                                 (fetch-access-tokens))))
              (rx/catch on-error))))))
 
 ;; --- EVENT: delete-access-token
 
 (defn delete-access-token
   [{:keys [id] :as params}]
-  (us/assert! ::us/uuid id)
+  (assert (uuid? id) "expect valid token id")
+
   (ptk/reify ::delete-access-token
+    ptk/UpdateEvent
+    (update [_ state]
+      (update state :access-tokens
+              (fn [tokens]
+                (into [] (remove #(= id (:id %))) tokens))))
+
     ptk/WatchEvent
     (watch [_ _ _]
       (let [{:keys [on-success on-error]
@@ -474,4 +535,3 @@
         (->> (rp/cmd! :delete-access-token params)
              (rx/tap on-success)
              (rx/catch on-error))))))
-

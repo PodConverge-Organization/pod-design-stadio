@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.types.page
   (:refer-clojure :exclude [empty?])
@@ -34,13 +34,14 @@
    [:id ::sm/uuid]
    [:axis [::sm/one-of #{:x :y}]]
    [:position ::sm/safe-number]
-   [:frame-id {:optional true} [:maybe ::sm/uuid]]])
+   [:frame-id {:optional true} [:maybe ::sm/uuid]]
+   [:color {:optional true} [:maybe ctc/schema:hex-color]]])
 
 (def schema:guides
   [:map-of {:gen/max 2} ::sm/uuid schema:guide])
 
 (def schema:objects
-  [:map-of {:gen/max 5} ::sm/uuid ::cts/shape])
+  [:map-of {:gen/max 5} ::sm/uuid cts/schema:shape])
 
 (def schema:comment-thread-position
   [:map {:title "CommentThreadPosition"}
@@ -58,14 +59,13 @@
    [:guides {:optional true} schema:guides]
    [:plugin-data {:optional true} ctpg/schema:plugin-data]
    [:background {:optional true} ctc/schema:hex-color]
+   ;; Per-page pixel grid color. Falls back to a hardcoded default when
+   ;; unset so existing files render identically to before.
+   [:pixel-grid-color {:optional true} ctc/schema:hex-color]
+   [:pixel-grid-opacity {:optional true} ::sm/safe-number]
 
    [:comment-thread-positions {:optional true}
     [:map-of ::sm/uuid schema:comment-thread-position]]])
-
-(sm/register! ::objects schema:objects)
-(sm/register! ::page schema:page)
-(sm/register! ::guide schema:guide)
-(sm/register! ::flow schema:flow)
 
 (def valid-guide?
   (sm/lazy-validator schema:guide))

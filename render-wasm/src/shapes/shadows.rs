@@ -1,27 +1,14 @@
 use skia_safe::{self as skia, image_filters, ImageFilter, Paint};
 
+use super::blurs::radius_to_sigma;
 use super::Color;
+use crate::render::filters::compose_filters;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum ShadowStyle {
+    #[default]
     Drop,
     Inner,
-}
-
-impl From<u8> for ShadowStyle {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => Self::Drop,
-            1 => Self::Inner,
-            _ => Self::default(),
-        }
-    }
-}
-
-impl Default for ShadowStyle {
-    fn default() -> Self {
-        Self::Drop
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,7 +21,6 @@ pub struct Shadow {
     hidden: bool,
 }
 
-// TODO: create shadows out of a chunk of bytes
 impl Shadow {
     pub fn new(
         color: Color,
@@ -62,20 +48,11 @@ impl Shadow {
         self.hidden
     }
 
-    pub fn get_drop_shadow_paint(&self, antialias: bool) -> Paint {
-        let mut paint = Paint::default();
-        let image_filter = self.get_drop_shadow_filter();
-
-        paint.set_image_filter(image_filter);
-        paint.set_anti_alias(antialias);
-
-        paint
-    }
-
     pub fn get_drop_shadow_filter(&self) -> Option<ImageFilter> {
+        let sigma = radius_to_sigma(self.blur);
         let mut filter = image_filters::drop_shadow_only(
             (self.offset.0, self.offset.1),
-            (self.blur, self.blur),
+            (sigma, sigma),
             self.color,
             None,
             None,
@@ -89,19 +66,21 @@ impl Shadow {
         filter
     }
 
-    pub fn get_inner_shadow_paint(&self, antialias: bool) -> Paint {
+    pub fn get_inner_shadow_paint(
+        &self,
+        antialias: bool,
+        blur_filter: Option<&ImageFilter>,
+    ) -> Paint {
         let mut paint = Paint::default();
-
-        let image_filter = self.get_inner_shadow_filter();
-
-        paint.set_image_filter(image_filter);
+        let shadow_filter = self.get_inner_shadow_filter();
+        let filter = compose_filters(blur_filter, shadow_filter.as_ref());
+        paint.set_image_filter(filter);
         paint.set_anti_alias(antialias);
-
         paint
     }
 
     pub fn get_inner_shadow_filter(&self) -> Option<ImageFilter> {
-        let sigma = self.blur * 0.5;
+        let sigma = radius_to_sigma(self.blur);
         let mut filter = skia::image_filters::drop_shadow_only(
             (self.offset.0, self.offset.1), // DPR?
             (sigma, sigma),

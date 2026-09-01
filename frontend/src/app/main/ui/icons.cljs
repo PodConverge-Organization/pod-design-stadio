@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.icons
   (:refer-clojure :exclude [import mask])
@@ -17,9 +17,9 @@
 (def ^:icon logo (icon-xref :podconverge-logo))
 (def ^:icon logo-icon (icon-xref :podconverge-logo-icon))
 (def ^:icon logo-error-screen (icon-xref :logo-error-screen))
-(def ^:icon login-illustration (icon-xref :login-illustration))
 (def ^:icon logo-subscription (icon-xref :logo-subscription))
 (def ^:icon logo-subscription-light (icon-xref :logo-subscription-light))
+(def ^:icon nitrate-welcome (icon-xref :nitrate-welcome))
 
 (def ^:icon brand-openid (icon-xref :brand-openid))
 (def ^:icon brand-github (icon-xref :brand-github))
@@ -107,13 +107,14 @@
 (def ^:icon document (icon-xref :document))
 (def ^:icon download (icon-xref :download))
 (def ^:icon drop-icon (icon-xref :drop))
+(def ^:icon drop-shadow (icon-xref :drop-shadow))
 (def ^:icon easing-ease-in-out (icon-xref :easing-ease-in-out))
 (def ^:icon easing-ease-in (icon-xref :easing-ease-in))
 (def ^:icon easing-ease-out (icon-xref :easing-ease-out))
 (def ^:icon easing-ease (icon-xref :easing-ease))
 (def ^:icon easing-linear (icon-xref :easing-linear))
 (def ^:icon effects (icon-xref :effects))
-(def ^:icon elipse (icon-xref :elipse))
+(def ^:icon ellipse (icon-xref :ellipse))
 (def ^:icon exit (icon-xref :exit))
 (def ^:icon expand (icon-xref :expand))
 (def ^:icon external-link (icon-xref :external-link))
@@ -149,6 +150,7 @@
 (def ^:icon hug-content (icon-xref :hug-content))
 (def ^:icon icon (icon-xref :icon))
 (def ^:icon img (icon-xref :img))
+(def ^:icon inner-shadow (icon-xref :inner-shadow))
 (def ^:icon interaction (icon-xref :interaction))
 (def ^:icon join-nodes (icon-xref :join-nodes))
 (def ^:icon justify-content-column-around (icon-xref :justify-content-column-around))
@@ -260,6 +262,7 @@
 (def ^:icon text-uppercase (icon-xref :text-uppercase))
 (def ^:icon thumbnail (icon-xref :thumbnail))
 (def ^:icon tick (icon-xref :tick))
+(def ^:icon tokens (icon-xref :tokens))
 (def ^:icon to-corner (icon-xref :to-corner))
 (def ^:icon to-curve (icon-xref :to-curve))
 (def ^:icon tree (icon-xref :tree))

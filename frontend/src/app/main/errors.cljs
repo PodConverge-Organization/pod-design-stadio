@@ -2,21 +2,24 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.errors
   "Generic error handling"
   (:require
    [app.common.exceptions :as ex]
-   [app.common.pprint :as pp]
-   [app.common.schema :as sm]
+   [app.common.time :as ct]
+   [app.config :as cf]
    [app.main.data.auth :as da]
+   [app.main.data.design-studio-session-recovery :as dsr]
+   [app.main.data.event :as ev]
    [app.main.data.modal :as modal]
    [app.main.data.notifications :as ntf]
    [app.main.data.workspace :as-alias dw]
    [app.main.router :as rt]
    [app.main.store :as st]
-   [app.util.globals :as glob]
+   [app.main.worker]
+   [app.util.globals :as g]
    [app.util.i18n :refer [tr]]
    [app.util.timers :as ts]
    [cuerdas.core :as str]
@@ -25,43 +28,65 @@
 ;; From app.main.data.workspace we can use directly because it causes a circular dependency
 (def reload-file nil)
 
-(defn- print-data!
-  [data]
-  (-> data
-      (dissoc ::sm/explain)
-      (dissoc :explain)
-      (dissoc ::trace)
-      (dissoc ::instance)
-      (pp/pprint {:width 70})))
+;; Will contain the latest error report assigned
+(def last-report nil)
 
-(defn- print-explain!
-  [data]
-  (when-let [{:keys [errors] :as explain} (::sm/explain data)]
-    (let [errors (mapv #(update % :schema sm/form) errors)]
-      (pp/pprint errors {:width 100 :level 15 :length 20})))
+;; Will contain last uncaught exception
+(def last-exception nil)
 
-  (when-let [explain (:explain data)]
-    (js/console.log explain)))
+(defn is-plugin-error?
+  "This is a placeholder that always return false. It will be
+  overwritten when plugin system is initialized. This works this way
+  because we can't import plugins here because plugins requires full
+  DOM.
 
-(defn- print-trace!
-  [data]
-  (some-> data ::trace js/console.log))
+  This placeholder is set on app.plugins/initialize event"
+  [_]
+  false)
 
-(defn- print-group!
-  [message f]
-  (try
-    (js/console.group message)
-    (f)
-    (catch :default _ nil)
-    (finally
-      (js/console.groupEnd message))))
+;; Re-entrancy guard: prevents on-error from calling itself recursively.
+;; If an error occurs while we are already handling an error (e.g. the
+;; notification emit itself throws), we log it and bail out immediately
+;; instead of recursing until the call-stack overflows.
+(def ^:private handling-error? (volatile! false))
 
-(defn print-cause!
-  [message cause]
-  (print-group! message (fn []
-                          (print-data! cause)
-                          (print-explain! cause)
-                          (print-trace! cause))))
+;; --- Stale-asset error detection and auto-reload
+;;
+;; When the browser loads JS modules from different builds (e.g.  shared.js from
+;; build A and main-dashboard.js from build B because you loaded it in the
+;; middle of a deploy per example), keyword constants referenced across modules
+;; will be undefined. This manifests as TypeError messages containing
+;; "$cljs$cst$" and "is undefined" or "is null".
+
+(defn stale-asset-error?
+  "Returns true if the error matches the signature of a cross-build
+  module mismatch. Two distinct patterns can appear depending on which
+  cross-module reference is accessed first:
+
+  1. Keyword constants  – names contain '$cljs$cst$'; these arise when a
+     compiled keyword defined in shared.js is absent in the version of
+     shared.js already resident in the browser.
+
+  2. Protocol dispatch – names contain '$cljs$core$I'; these arise when
+     main-workspace.js (new build) tries to invoke a protocol method on
+     an object whose prototype was stamped by an older shared.js that
+     used different mangled property names (e.g. the LazySeq /
+     instaparse crash: 'Cannot read properties of undefined (reading
+     \\'$cljs$core$IFn$_invoke$arity$1$\\')').
+
+  Both patterns are symptoms of the same split-brain deployment
+  scenario (browser has JS chunks from two different builds) and
+  should trigger a hard page reload."
+  [cause]
+  (when (some? cause)
+    (let [message (ex-message cause)]
+      (and (string? message)
+           (or (str/includes? message "$cljs$cst$")
+               (str/includes? message "$cljs$core$I"))
+           (or (str/includes? message "is undefined")
+               (str/includes? message "is null")
+               (str/includes? message "is not a function")
+               (str/includes? message "Cannot read properties of undefined"))))))
 
 (defn exception->error-data
   [cause]
@@ -71,36 +96,141 @@
         (assoc ::instance cause)
         (assoc ::trace (.-stack cause)))))
 
-(defn print-error!
-  [cause]
-  (cond
-    (map? cause)
-    (print-cause! (:hint cause "Unexpected Error") cause)
-
-    (ex/error? cause)
-    (print-cause! (ex-message cause) (ex-data cause))
-
-    :else
-    (print-cause! (ex-message cause) (exception->error-data cause))))
-
 (defn on-error
-  "A general purpose error handler."
+  "A general purpose error handler.
+
+  Protected by a re-entrancy guard: if an error is raised while this
+  function is already on the call stack (e.g. the notification emit
+  itself fails), we print it to the console and return immediately
+  instead of recursing until the call-stack is exhausted."
   [error]
-  (if (map? error)
-    (ptk/handle-error error)
-    (let [data (exception->error-data error)]
-      (ptk/handle-error data))))
+  (if @handling-error?
+    (do
+      (js/console.error "[on-error] re-entrant call suppressed")
+      (ex/print-throwable error))
+    (do
+      (vreset! handling-error? true)
+      (try
+        (if (map? error)
+          (ptk/handle-error error)
+          (let [data (exception->error-data error)]
+            (ptk/handle-error data)))
+        (finally
+          (vreset! handling-error? false))))))
+
+;; Inject dependency to remove circular dependency
+(set! app.main.worker/on-error on-error)
 
 ;; Set the main potok error handler
 (reset! st/on-error on-error)
 
+(defn generate-report
+  [cause]
+  (try
+    (let [team-id    (:current-team-id @st/state)
+          file-id    (:current-file-id @st/state)
+          profile-id (:profile-id @st/state)
+          data       (ex-data cause)]
+
+      (with-out-str
+        (println "Context:")
+        (println "--------------------")
+        (println "Timestamp:" (ct/format-inst (ct/now) :rfc1123))
+        (println "Hint:     " (or (:hint data) (ex-message cause) "--"))
+        (println "Prof ID:  " (str (or profile-id "--")))
+        (println "Team ID:  " (str (or team-id "--")))
+        (when-let [file-id (or (:file-id data) file-id)]
+          (println "File ID:  " (str file-id)))
+        (println "Version:  " (:full cf/version))
+        (println "HREF:     " (rt/get-current-href))
+        (println)
+
+        (println
+         (ex/format-throwable cause))
+        (println)
+
+        (println "Last events:")
+        (println "--------------------")
+        (println (st/format-last-events))
+        (println)))
+    (catch :default cause
+      (.error js/console "error on generating report" cause)
+      nil)))
+
+(defn submit-report
+  "Report the error report to the audit log subsystem"
+  [& {:keys [event-name report hint] :or {event-name "unhandled-exception"}}]
+  (when (and (not (str/empty? hint))
+             (string? report)
+             (string? event-name))
+    (st/emit!
+     (ev/event {::ev/name event-name
+                :hint hint
+                :href (rt/get-current-href)
+                :report report}))))
+
+(defn flash
+  "Show error notification banner and emit error report.
+
+  The notification is scheduled asynchronously (via tm/schedule) to
+  avoid pushing a new event into the potok store while the store's own
+  error-handling pipeline is still on the call stack.  Emitting
+  synchronously from inside an error handler creates a re-entrant
+  event-processing cycle that can exhaust the JS call stack
+  (RangeError: Maximum call stack size exceeded)."
+  [& {:keys [type hint cause] :or {type :handled}}]
+  (when (ex/exception? cause)
+    (when-let [event-name (case type
+                            :handled "handled-exception"
+                            :unhandled "unhandled-exception"
+                            :silent nil)]
+      (let [report (generate-report cause)]
+        (submit-report :event-name event-name
+                       :report report
+                       :hint (ex/get-hint cause)))))
+
+  (ts/schedule
+   #(st/emit!
+     (ntf/show {:content (or ^boolean hint (tr "errors.generic"))
+                :type :toast
+                :level :error
+                :timeout 5000}))))
+
+(defmethod ptk/handle-error :network
+  [error]
+  ;; Transient network errors (e.g. lost connectivity, DNS failure)
+  ;; should not replace the entire page with an error screen. Show a
+  ;; non-intrusive toast instead and let the user continue working.
+  (when-let [cause (::instance error)]
+    (ex/print-throwable cause :prefix "Network Error"))
+  (flash :cause (::instance error) :type :handled))
+
+(defmethod ptk/handle-error :internal
+  [error]
+  (st/emit! (rt/assign-exception error))
+  (when-let [cause (::instance error)]
+    (ex/print-throwable cause :prefix "Internal Error")))
+
 (defmethod ptk/handle-error :default
   [error]
-  (st/async-emit! (rt/assign-exception error))
-  (print-group! "Unhandled Error"
-                (fn []
-                  (print-trace! error)
-                  (print-data! error))))
+  (if (and (string? (:hint error))
+           (str/starts-with? (:hint error) "Assert failed:"))
+    (ptk/handle-error (assoc error :type :assertion))
+    (when-let [cause (::instance error)]
+      (ex/print-throwable cause :prefix "Unexpected Error")
+      (flash :cause cause :type :unhandled))))
+
+(defmethod ptk/handle-error :wasm-error
+  [error]
+  (when-let [cause (::instance error)]
+    (ex/print-throwable cause)
+    (let [code (get error :code)]
+      (cond
+        (= code :panic)
+        (st/emit! (rt/assign-exception error))
+
+        :else
+        (flash :type :handled :cause cause)))))
 
 ;; We receive a explicit authentication error; If the uri is for
 ;; workspace, dashboard, viewer or settings, then assign the exception
@@ -110,16 +240,24 @@
 (defmethod ptk/handle-error :authentication
   [error]
   (let [message (tr "errors.auth.unable-to-login")
-        uri     (rt/get-current-href)
+        decision (dsr/runtime-authentication-decision
+                  (rt/lookup-name @st/state)
+                  error
+                  cf/design-studio-recovery-uri)]
 
-        show-error?
-        (or (str/includes? uri "workspace")
-            (str/includes? uri "dashboard")
-            (str/includes? uri "view")
-            (str/includes? uri "settings"))]
+    (case (:action decision)
+      :recover
+      (st/emit! (dsr/redirect-to-recovery
+                 cf/design-studio-recovery-uri
+                 (rt/get-current-href)))
 
-    (if show-error?
+      :fail-closed
+      (st/async-emit! (rt/assign-exception dsr/fail-closed-error))
+
+      :local-exception
       (st/async-emit! (rt/assign-exception error))
+
+      :logout
       (do
         (st/emit! (da/logout))
         (ts/schedule 500 #(st/emit! (ntf/warn message)))))))
@@ -132,10 +270,10 @@
 
 (defmethod ptk/handle-error :validation
   [{:keys [code] :as error}]
-  (print-group! "Validation Error"
-                (fn []
-                  (print-data! error)
-                  (print-explain! error)))
+
+  (when-let [instance (get error ::instance)]
+    (ex/print-throwable instance :prefix "Validation Error"))
+
   (cond
     (= code :invalid-paste-data)
     (let [message (tr "errors.paste-data-validation")]
@@ -183,23 +321,13 @@
     :else
     (st/async-emit! (rt/assign-exception error))))
 
-
 ;; This is a pure frontend error that can be caused by an active
-;; assertion (assertion that is preserved on production builds). From
-;; the user perspective this should be treated as internal error.
+;; assertion (assertion that is preserved on production builds).
 (defmethod ptk/handle-error :assertion
   [error]
-  (ts/schedule
-   #(st/emit! (ntf/show {:content (tr "errors.internal-assertion-error")
-                         :type :toast
-                         :level :error
-                         :timeout 3000})))
-
-  (print-group! "Internal Assertion Error"
-                (fn []
-                  (print-trace! error)
-                  (print-data! error)
-                  (print-explain! error))))
+  (when-let [cause (::instance error)]
+    (flash :cause cause :type :handled)
+    (ex/print-throwable cause :prefix "Assertion Error")))
 
 ;; ;; All the errors that happens on worker are handled here.
 (defmethod ptk/handle-error :worker-error
@@ -211,9 +339,8 @@
                 :level :error
                 :timeout 3000})))
 
-  (print-group! "Internal Worker Error"
-                (fn []
-                  (print-data! error))))
+  (some-> (::instance error)
+          (ex/print-throwable :prefix "Web Worker Error")))
 
 ;; Error on parsing an SVG
 (defmethod ptk/handle-error :svg-parser
@@ -239,14 +366,13 @@
 (derive :not-found ::exceptional-state)
 (derive :bad-gateway ::exceptional-state)
 (derive :service-unavailable ::exceptional-state)
+(derive :nitrate-unavailable ::exceptional-state)
 
 (defmethod ptk/handle-error ::exceptional-state
   [error]
-  (when-let [cause (::instance error)]
-    (js/console.log (.-stack cause)))
-
-  (ts/schedule
-   #(st/emit! (rt/assign-exception error))))
+  (when-let [instance (get error ::instance)]
+    (ex/print-throwable instance :prefix "Exceptional State"))
+  (ts/schedule #(st/emit! (rt/assign-exception error))))
 
 (defn- redirect-to-dashboard
   []
@@ -254,7 +380,7 @@
         project-id (:current-project-id @st/state)]
     (if (and project-id team-id)
       (st/emit! (rt/nav :dashboard-files {:team-id team-id :project-id project-id}))
-      (set! (.-href glob/location) ""))))
+      (set! (.-href g/location) ""))))
 
 (defmethod ptk/handle-error :restriction
   [{:keys [code] :as error}]
@@ -286,7 +412,7 @@
       (st/emit! (modal/show {:type :alert :message message :on-accept redirect-to-dashboard})))
 
     (= :max-quote-reached code)
-    (let [message (tr "errors.max-quote-reached" (:target error))]
+    (let [message (tr "errors.max-quota-reached" (:target error))]
       (st/emit! (modal/show {:type :alert :message message})))
 
     (or (= :paste-feature-not-enabled code)
@@ -302,9 +428,10 @@
                                           :text (tr "errors.deprecated.contact.text")
                                           :after (tr "errors.deprecated.contact.after")
                                           :on-click #(st/emit! (rt/nav :settings-feedback))}}))
-
     :else
-    (print-cause! "Restriction Error" error)))
+    (when-let [cause (::instance error)]
+      (ex/print-throwable cause :prefix "Restriction Error")
+      (flash :cause cause :type :unhandled))))
 
 ;; This happens when the backed server fails to process the
 ;; request. This can be caused by an internal assertion or any other
@@ -312,40 +439,140 @@
 
 (defmethod ptk/handle-error :server-error
   [error]
-  (st/async-emit! (rt/assign-exception error))
-  (print-group! "Server Error"
-                (fn []
-                  (print-data! (dissoc error :data))
+  (when-let [instance (get error ::instance)]
+    (ex/print-throwable instance :prefix "Server Error"))
+  (st/async-emit! (rt/assign-exception error)))
 
-                  (when-let [werror (:data error)]
-                    (cond
-                      (= :assertion (:type werror))
-                      (print-group! "Assertion Error"
-                                    (fn []
-                                      (print-data! werror)
-                                      (print-explain! werror)))
+(defn- from-extension?
+  "True when the error stack trace originates from a browser extension."
+  [cause]
+  (let [stack (.-stack cause)]
+    (and (string? stack)
+         (or (str/includes? stack "chrome-extension://")
+             (str/includes? stack "moz-extension://")
+             ;; Safari/WebKit masks extension and Web Inspector URLs
+             ;; with this internal scheme.
+             (str/includes? stack "webkit-masked-url://")))))
 
-                      :else
-                      (print-group! "Unexpected"
-                                    (fn []
-                                      (print-data! werror)
-                                      (print-explain! werror))))))))
+(defn- from-posthog?
+  "True when the error stack trace originates from PostHog analytics."
+  [cause]
+  (let [stack (.-stack cause)]
+    (and (string? stack)
+         (str/includes? stack "posthog"))))
 
+(defn is-ignorable-exception?
+  "True when the error is known to be harmless (browser extensions, analytics,
+   React/extension DOM conflicts, etc.) and should NOT be surfaced to the user."
+  [cause]
+  (let [message (ex-message cause)]
+    (or (from-extension? cause)
+        (from-posthog? cause)
+        (= message "Possible side-effect in debug-evaluate")
+        (= message "Unexpected end of input")
+        (str/starts-with? message "invalid props on component")
+        (str/starts-with? message "Unexpected token ")
+        ;; Native AbortError DOMException: raised when an in-flight
+        ;; HTTP fetch is cancelled via AbortController (e.g. by an
+        ;; RxJS unsubscription / take-until chain).  These are
+        ;; handled gracefully inside app.util.http/fetch and must NOT
+        ;; be surfaced as application errors.
+        (= (.-name ^js cause) "AbortError")
+        ;; Zone.js (injected by browser extensions such as Angular
+        ;; DevTools) wraps event listeners and assigns a custom
+        ;; .toString to its wrapper functions using
+        ;; Object.defineProperty.  When the wrapper was previously
+        ;; defined with {writable: false}, a subsequent plain assignment
+        ;; in strict mode (our libs.js uses "use strict") throws this
+        ;; TypeError.  This is a known Zone.js / browser-extension
+        ;; incompatibility and is NOT a Penpot bug.
+        (str/starts-with? message "Cannot assign to read only property 'toString'")
+        ;; Safari TypeError: "Attempting to change value of a readonly
+        ;; property".  Raised when browser extensions or Web Inspector
+        ;; devtools (e.g., jsonPrune) try to mutate ClojureScript's
+        ;; immutable data structures via Object.defineProperty.
+        ;; ClojureScript defines getter-only properties on its maps
+        ;; and records, making them readonly.  This is NOT a Penpot bug.
+        (and (= (.-name ^js cause) "TypeError")
+             (= message "Attempting to change value of a readonly property"))
+        ;; NotFoundError DOMException: "Failed to execute
+        ;; 'removeChild' on 'Node'" — Thrown by React's commit
+        ;; phase when the DOM tree has been modified externally
+        ;; (typically by browser extensions like Grammarly,
+        ;; LastPass, translation tools, or ad blockers that
+        ;; inject/remove nodes).  The entire stack trace is inside
+        ;; React internals (libs.js) with no application code,
+        ;; so there is nothing actionable on our side.  React's
+        ;; error boundary already handles recovery.
+        (and (= (.-name ^js cause) "NotFoundError")
+             (str/includes? message "removeChild")))))
+
+(defn- from-plugin?
+  "Check if the error is marked as originating from plugin code. The
+  plugin runtime tracks plugin errors in a WeakMap, which works even
+  in SES hardened environments where error objects may be frozen."
+  [cause]
+  (try
+    (is-plugin-error? cause)
+    (catch :default _
+      false)))
 
 (defonce uncaught-error-handler
-  (letfn [(is-ignorable-exception? [cause]
-            (let [message (ex-message cause)]
-              (or (= message "Possible side-effect in debug-evaluate")
-                  (= message "Unexpected end of input")
-                  (str/starts-with? message "invalid props on component")
-                  (str/starts-with? message "Unexpected token "))))
-
-          (on-unhandled-error [event]
+  (letfn [(on-unhandled-error [event]
             (.preventDefault ^js event)
-            (when-let [error (unchecked-get event "error")]
-              (when-not (is-ignorable-exception? error)
-                (on-error error))))]
+            (when-let [cause (unchecked-get event "error")]
+              (cond
+                (stale-asset-error? cause)
+                (cf/throttled-reload :reason (ex-message cause))
 
-    (.addEventListener glob/window "error" on-unhandled-error)
+                ;; Plugin errors: log to console and ignore
+                (from-plugin? cause)
+                (ex/print-throwable cause :prefix "Plugin Error")
+
+                ;; Other ignorable exceptions: ignore silently
+                (is-ignorable-exception? cause)
+                nil
+
+                ;; All other errors: show exception page
+                :else
+
+                (let [data (ex-data cause)
+                      type (get data :type)]
+                  (set! last-exception cause)
+                  (if (= :wasm-error type)
+                    (on-error cause)
+                    (do
+                      (ex/print-throwable cause :prefix "Uncaught Exception")
+                      (ts/asap #(flash :cause cause :type :unhandled))))))))
+
+          (on-unhandled-rejection [event]
+            (.preventDefault ^js event)
+            (when-let [cause (unchecked-get event "reason")]
+              (cond
+                (stale-asset-error? cause)
+                (cf/throttled-reload :reason (ex-message cause))
+
+                ;; Plugin errors: log to console and ignore
+                (from-plugin? cause)
+                (ex/print-throwable cause :prefix "Plugin Error")
+
+                ;; Other ignorable exceptions: ignore silently
+                (is-ignorable-exception? cause)
+                nil
+
+                ;; All other errors: show exception page
+                :else
+                (let [data (ex-data cause)
+                      type (get data :type)]
+                  (set! last-exception cause)
+                  (if (= :wasm-error type)
+                    (on-error cause)
+                    (do
+                      (ex/print-throwable cause :prefix "Uncaught Rejection")
+                      (ts/asap #(flash :cause cause :type :unhandled))))))))]
+
+    (.addEventListener g/window "error" on-unhandled-error)
+    (.addEventListener g/window "unhandledrejection" on-unhandled-rejection)
     (fn []
-      (.removeEventListener glob/window "error" on-unhandled-error))))
+      (.removeEventListener g/window "error" on-unhandled-error)
+      (.removeEventListener g/window "unhandledrejection" on-unhandled-rejection))))

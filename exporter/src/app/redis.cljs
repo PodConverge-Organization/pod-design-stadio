@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.redis
   (:require
@@ -18,7 +18,7 @@
 
 (defn- create-client
   [uri]
-  (let [^js client (new redis uri)]
+  (let [^js client (new redis/default uri)]
     (.on client "connect"
          (fn [] (l/info :hint "redis connection established" :uri uri)))
     (.on client "error"

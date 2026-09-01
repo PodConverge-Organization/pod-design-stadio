@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.types.shape.layout
   (:require
@@ -14,22 +14,22 @@
    [app.common.schema :as sm]
    [app.common.uuid :as uuid]))
 
-;; :layout                 ;; :flex, :grid in the future
-;; :layout-flex-dir        ;; :row, :row-reverse, :column, :column-reverse
-;; :layout-gap-type        ;; :simple, :multiple
-;; :layout-gap             ;; {:row-gap number , :column-gap number}
+;; :layout                  ;; :flex, :grid in the future
+;; :layout-flex-dir         ;; :row, :row-reverse, :column, :column-reverse
+;; :layout-gap-type         ;; :simple, :multiple
+;; :layout-gap              ;; {:row-gap number , :column-gap number}
 
-;; :layout-align-items     ;; :start :end :center :stretch
-;; :layout-align-content   ;; :start :center :end :space-between :space-around :space-evenly :stretch (by default)
+;; :layout-align-items      ;; :start :end :center :stretch
+;; :layout-align-content    ;; :start :center :end :space-between :space-around :space-evenly :stretch (by default)
 ;; :layout-justify-items    ;; :start :center :end :space-between :space-around :space-evenly
-;; :layout-justify-content ;; :start :center :end :space-between :space-around :space-evenly
-;; :layout-wrap-type       ;; :wrap, :nowrap
-;; :layout-padding-type    ;; :simple, :multiple
-;; :layout-padding         ;; {:p1 num :p2 num :p3 num :p4 num} number could be negative
+;; :layout-justify-content  ;; :start :center :end :space-between :space-around :space-evenly
+;; :layout-wrap-type        ;; :wrap, :nowrap
+;; :layout-padding-type     ;; :simple, :multiple
+;; :layout-padding          ;; {:p1 num :p2 num :p3 num :p4 num} number could be negative
 
-;; layout-grid-rows        ;; vector of grid-track
-;; layout-grid-columns     ;; vector of grid-track
-;; layout-grid-cells       ;; map of id->grid-cell
+;; layout-grid-rows         ;; vector of grid-track
+;; layout-grid-columns      ;; vector of grid-track
+;; layout-grid-cells        ;; map of id->grid-cell
 
 ;; ITEMS
 ;; :layout-item-margin      ;; {:m1 0 :m2 0 :m3 0 :m4 0}
@@ -262,7 +262,7 @@
         (or (nil? current) (= current-id parent-id))
         false
 
-        (cfh/frame-shape? current-id)
+        (cfh/frame-shape? current)
         (:layout current)
 
         :else
@@ -517,7 +517,7 @@
   ([objects id]
    (item-absolute? (get objects id)))
   ([shape]
-   (true? (:layout-item-absolute shape))))
+   (true? (get shape :layout-item-absolute))))
 
 (defn position-absolute?
   ([objects id]
@@ -874,6 +874,42 @@
         (duplicate-cells :column index (inc index) ids-map)
         (assign-cells objects))))
 
+(defn duplicate-row-at
+  "Duplicate source row and insert the copy at target-index (0-indexed).
+   Like `duplicate-row` but inserts at an arbitrary position.
+   Note: after add-grid-row, if target <= source the source cells shift
+   by +1, so we must adjust the from-index for duplicate-cells."
+  [shape objects source-index target-index ids-map]
+  (let [value          (dm/get-in shape [:layout-grid-rows source-index])
+        ;; After inserting at target-index, cells at rows >= (inc target-index)
+        ;; get shifted +1. If target <= source, the source row shifts.
+        adjusted-source (if (<= target-index source-index)
+                          (inc source-index)
+                          source-index)]
+    (-> shape
+        (remove-cell-areas-after :row source-index)
+        (add-grid-row value target-index)
+        (duplicate-cells :row adjusted-source target-index ids-map)
+        (assign-cells objects))))
+
+(defn duplicate-column-at
+  "Duplicate source column and insert the copy at target-index (0-indexed).
+   Like `duplicate-column` but inserts at an arbitrary position.
+   Note: after add-grid-column, if target <= source the source cells shift
+   by +1, so we must adjust the from-index for duplicate-cells."
+  [shape objects source-index target-index ids-map]
+  (let [value          (dm/get-in shape [:layout-grid-columns source-index])
+        ;; After inserting at target-index, cells at columns >= (inc target-index)
+        ;; get shifted +1. If target <= source, the source column shifts.
+        adjusted-source (if (<= target-index source-index)
+                          (inc source-index)
+                          source-index)]
+    (-> shape
+        (remove-cell-areas-after :column source-index)
+        (add-grid-column value target-index)
+        (duplicate-cells :column adjusted-source target-index ids-map)
+        (assign-cells objects))))
+
 (defn make-remove-cell
   [attr span-attr track-num]
   (fn [[_ cell]]
@@ -1038,7 +1074,7 @@
           (maybe-remove?)))))
 
 (defn check-deassigned-cells
-  "Clean the cells whith shapes that are no longer in the layout"
+  "Clean the cells with shapes that are no longer in the layout"
   [parent objects]
 
   (let [child-set (set (:shapes parent))
@@ -1439,7 +1475,7 @@
         (update-in [:layout-grid-cells id-from]
                    assoc
                    :shapes (:shapes cell-to)
-                   :podition (:position cell-to))
+                   :position (:position cell-to))
         (update-in [:layout-grid-cells id-to]
                    assoc
                    :shapes (:shapes cell-from)

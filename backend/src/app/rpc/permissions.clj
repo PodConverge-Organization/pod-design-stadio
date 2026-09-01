@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.rpc.permissions
   "A permission checking helper factories."
@@ -10,15 +10,14 @@
    [app.common.exceptions :as ex]
    [app.common.schema :as sm]))
 
-(sm/register!
- ^{::sm/type ::permissions}
- [:map {:title "Permissions"}
-  [:type {:gen/elements [:membership :share-link]} :keyword]
-  [:is-owner ::sm/boolean]
-  [:is-admin ::sm/boolean]
-  [:can-edit ::sm/boolean]
-  [:can-read ::sm/boolean]
-  [:is-logged ::sm/boolean]])
+(def schema:permissions
+  [:map {:title "Permissions"}
+   [:type {:gen/elements [:membership :share-link]} :keyword]
+   [:is-owner ::sm/boolean]
+   [:is-admin ::sm/boolean]
+   [:can-edit ::sm/boolean]
+   [:can-read ::sm/boolean]
+   [:is-logged ::sm/boolean]])
 
 (def valid-roles
   #{:admin :owner :editor :viewer})

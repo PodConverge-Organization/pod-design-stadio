@@ -3,12 +3,12 @@ import { DashboardPage } from "./DashboardPage";
 
 export class SubscriptionProfilePage extends DashboardPage {
   static async init(page) {
-    await DashboardPage.initWebSockets(page);
+    await super.init(page);
 
-    await DashboardPage.mockRPC(
+    await super.mockRPC(
       page,
-      "get-owned-teams",
-      "subscription/get-owned-teams.json",
+      "get-subscription-usage",
+      "subscription/get-subscription-usage.json",
     );
   }
 

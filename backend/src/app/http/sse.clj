@@ -2,11 +2,10 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.http.sse
   "SSE (server sent events) helpers"
-  (:refer-clojure :exclude [tap])
   (:require
    [app.common.data :as d]
    [app.common.logging :as l]
@@ -22,7 +21,7 @@
 
 (defn- write!
   [^OutputStream output ^bytes data]
-  (l/trc :hint "writting data" :data data :length (alength data))
+  (l/trc :hint "writing data" :data data :length (alength data))
   (.write output data)
   (.flush output))
 
@@ -33,7 +32,7 @@
                  (println "event:" (d/name name))
                  (println "data:" (t/encode-str data {:type :json-verbose}))
                  (println))]
-      (.getBytes data "UTF-8"))
+      (.getBytes ^String data "UTF-8"))
     (catch Throwable cause
       (l/err :hint "unexpected error on encoding value on sse stream"
              :cause cause)
@@ -44,7 +43,8 @@
 (def default-headers
   {"Content-Type" "text/event-stream;charset=UTF-8"
    "Cache-Control" "no-cache, no-store, max-age=0, must-revalidate"
-   "Pragma" "no-cache"})
+   "Pragma" "no-cache"
+   "X-Accel-Buffering" "no"})
 
 (defn response
   [handler & {:keys [buf] :or {buf 32} :as opts}]
@@ -53,8 +53,9 @@
      ::yres/status 200
      ::yres/body (yres/stream-body
                   (fn [_ output]
+
                     (let [channel  (sp/chan :buf buf :xf (keep encode))
-                          listener (events/start-listener
+                          listener (events/spawn-listener
                                     channel
                                     (partial write! output)
                                     (partial pu/close! output))]

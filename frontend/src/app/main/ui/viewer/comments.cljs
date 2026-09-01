@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.viewer.comments
   (:require-macros [app.main.style :as stl])
@@ -19,7 +19,7 @@
    [app.main.store :as st]
    [app.main.ui.comments :as cmt]
    [app.main.ui.components.dropdown :refer [dropdown]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.icons :as deprecated-icon]
    [app.main.ui.workspace.comments :as wc]
    [app.main.ui.workspace.viewport.utils :as utils]
    [app.util.dom :as dom]
@@ -69,7 +69,7 @@
            :data-testid "viewer-comments-dropdown"
            :on-click toggle-dropdown}
      [:span {:class (stl/css :dropdown-title)} (tr "labels.comments")]
-     [:span {:class (stl/css :icon-dropdown)} i/arrow]
+     [:span {:class (stl/css :icon-dropdown)} deprecated-icon/arrow]
 
      [:& dropdown {:show @show-dropdown?
                    :on-close hide-dropdown}
@@ -82,7 +82,7 @@
              :on-click update-mode}
         [:span {:class (stl/css :label)} (tr "labels.show-all-comments")]
         (when (or (= :all cmode) (nil? cmode))
-          [:span {:class (stl/css :icon)} i/tick])]
+          [:span {:class (stl/css :icon)} deprecated-icon/tick])]
 
        [:li {:class (stl/css-case
                      :dropdown-element true
@@ -92,7 +92,7 @@
         [:span {:class (stl/css :label)} (tr "labels.show-your-comments")]
         (when (= :yours cmode)
           [:span {:class (stl/css :icon)}
-           i/tick])]
+           deprecated-icon/tick])]
 
        [:li {:class (stl/css :separator)}]
 
@@ -104,7 +104,7 @@
         [:span {:class (stl/css :label)} (tr "labels.hide-resolved-comments")]
         (when  (= :pending cshow)
           [:span {:class (stl/css :icon)}
-           i/tick])]
+           deprecated-icon/tick])]
 
        [:li {:class (stl/css :separator)}]
 
@@ -115,7 +115,7 @@
              :on-click update-options}
         [:span {:class (stl/css :label)} (tr "labels.show-comments-list")]
         (when show-sidebar?
-          [:span {:class (stl/css :icon)} i/tick])]]]]))
+          [:span {:class (stl/css :icon)} deprecated-icon/tick])]]]]))
 
 
 (defn- update-thread-position
@@ -235,7 +235,6 @@
            :zoom zoom}])]]]))
 
 (mf/defc comments-sidebar*
-  {::mf/props :obj}
   [{:keys [profiles frame page]}]
   (let [profile     (mf/deref refs/profile)
         local       (mf/deref refs/comments-local)

@@ -2,23 +2,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@use "../../ds/typography.scss" as *;
-@use "../../ds/spacing.scss" as *;
-@import "refactor/common-refactor.scss";
+@use "ds/typography.scss" as *;
+@use "ds/spacing.scss" as *;
+@use "refactor/common-refactor.scss" as deprecated;
 
 .sidebar-wrapper {
   display: grid;
   grid-template-rows: auto 1fr auto;
+
   // Overflow on the bottom section can't be done without hardcoded values for the height
   // This has to be changed from the wrapping sidebar styles
-  height: calc(100vh - #{$s-92});
+  height: calc(100vh - #{deprecated.$s-92});
   overflow: hidden;
 }
 
 .token-management-section-wrapper {
-  position: relative;
   display: flex;
   flex: 1;
   height: var(--resize-height);
@@ -46,7 +46,7 @@
 }
 
 .section-text-icon {
-  font-size: $fs-12;
+  font-size: deprecated.$fs-12;
   width: var(--sp-l);
   height: var(--sp-l);
   display: flex;
@@ -55,8 +55,9 @@
 
 .section-icon {
   margin-right: var(--sp-xs);
+
   // Align better with the label
-  translate: 0px -1px;
+  translate: 0 -1px;
 }
 
 .import-export-button-wrapper {
@@ -72,30 +73,33 @@
 }
 
 .import-export-button {
-  @extend .button-secondary;
+  @extend %button-secondary;
+
   display: flex;
   align-items: center;
   justify-content: end;
-  padding: $s-6 var(--sp-s);
+  padding: deprecated.$s-6 var(--sp-s);
   text-transform: uppercase;
   gap: var(--sp-s);
   background-color: var(--color-background-primary);
-
   box-shadow: var(--el-shadow-dark);
 }
 
 .import-export-menu {
-  @extend .menu-dropdown;
-  top: -#{$s-6};
+  @extend %menu-dropdown;
+
+  top: -#{deprecated.$s-6};
   right: 0;
   translate: 0 -100%;
-  width: $s-192;
+  width: deprecated.$s-192;
   margin: 0;
 }
 
 .import-export-menu-item {
-  @extend .menu-item-base;
+  @extend %menu-item-base;
+
   cursor: pointer;
+
   &:hover {
     color: var(--menu-foreground-color-hover);
   }
@@ -119,13 +123,13 @@
   position: absolute;
   left: 0;
   width: 100%;
-  padding: $s-3 0 $s-1 0;
-  height: $s-6;
+  padding: deprecated.$s-3 0 deprecated.$s-1 0;
+  height: deprecated.$s-6;
   cursor: ns-resize;
   z-index: 1;
 }
 
 .resize-handle-horiz {
-  border-bottom: $s-2 solid var(--resize-area-border-color);
+  border-bottom: deprecated.$s-2 solid var(--resize-area-border-color);
   cursor: ns-resize;
 }

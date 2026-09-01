@@ -2,10 +2,9 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.srepl.main
-  "A collection of adhoc fixes scripts."
   #_:clj-kondo/ignore
   (:require
    [app.auth :refer [derive-password]]
@@ -16,7 +15,7 @@
    [app.common.features :as cfeat]
    [app.common.files.validate :as cfv]
    [app.common.logging :as l]
-   [app.common.pprint :as p]
+   [app.common.pprint :as pp]
    [app.common.schema :as sm]
    [app.common.spec :as us]
    [app.common.time :as ct]
@@ -24,22 +23,24 @@
    [app.config :as cf]
    [app.db :as db]
    [app.db.sql :as-alias sql]
-   [app.features.fdata :as feat.fdata]
+   [app.features.fdata :as fdata]
+   [app.features.file-snapshots :as fsnap]
+   [app.http.session :as session]
    [app.loggers.audit :as audit]
-   [app.main :as main]
    [app.msgbus :as mbus]
    [app.rpc.commands.auth :as auth]
    [app.rpc.commands.files :as files]
-   [app.rpc.commands.files-snapshot :as fsnap]
    [app.rpc.commands.management :as mgmt]
    [app.rpc.commands.profile :as profile]
    [app.rpc.commands.projects :as projects]
    [app.rpc.commands.teams :as teams]
-   [app.srepl.fixes :as fixes]
    [app.srepl.helpers :as h]
+   [app.srepl.procs.file-repair :as procs.file-repair]
+   [app.system :as sys]
    [app.util.blob :as blob]
    [app.util.pointer-map :as pmap]
    [app.worker :as wrk]
+   [clojure.datafy :refer [datafy]]
    [clojure.java.io :as io]
    [clojure.pprint :refer [print-table]]
    [clojure.stacktrace :as strace]
@@ -47,6 +48,7 @@
    [cuerdas.core :as str]
    [datoteka.fs :as fs]
    [promesa.exec :as px]
+   [promesa.exec.csp :as sp]
    [promesa.exec.semaphore :as ps]
    [promesa.util :as pu]))
 
@@ -56,14 +58,14 @@
 
 (defn print-tasks
   []
-  (let [tasks (:app.worker/registry main/system)]
-    (p/pprint (keys tasks) :level 200)))
+  (let [tasks (:app.worker/registry sys/system)]
+    (pp/pprint (keys tasks) :level 200)))
 
 (defn run-task!
   ([tname]
    (run-task! tname {}))
   ([tname params]
-   (wrk/invoke! (-> main/system
+   (wrk/invoke! (-> sys/system
                     (assoc ::wrk/task tname)
                     (assoc ::wrk/params params)))))
 
@@ -71,14 +73,14 @@
   ([name]
    (schedule-task! name {}))
   ([name params]
-   (wrk/submit! (-> main/system
+   (wrk/submit! (-> sys/system
                     (assoc ::wrk/task name)
                     (assoc ::wrk/params params)))))
 
 (defn send-test-email!
   [destination]
   (assert (string? destination) "destination should be provided")
-  (-> main/system
+  (-> sys/system
       (assoc ::wrk/task :sendmail)
       (assoc ::wrk/params {:body "test email"
                            :subject "test email"
@@ -87,7 +89,7 @@
 
 (defn resend-email-verification-email!
   [email]
-  (db/tx-run! main/system
+  (db/tx-run! sys/system
               (fn [{:keys [::db/conn] :as cfg}]
                 (let [email   (profile/clean-email email)
                       profile (profile/get-profile-by-email conn email)]
@@ -101,7 +103,7 @@
   "Mark the profile blocked and removes all the http sessiones
   associated with the profile-id."
   [email]
-  (some-> main/system
+  (some-> sys/system
           (db/tx-run!
            (fn [{:keys [::db/conn] :as system}]
              (when-let [profile (db/get* conn :profile
@@ -115,7 +117,7 @@
   "Mark the profile blocked and removes all the http sessiones
   associated with the profile-id."
   [email]
-  (some-> main/system
+  (some-> sys/system
           (db/tx-run!
            (fn [{:keys [::db/conn] :as system}]
              (when-let [profile (db/get* conn :profile
@@ -129,41 +131,22 @@
 (defn reset-password!
   "Reset a password to a specific one for a concrete user or all users
   if email is `:all` keyword."
-  [& {:keys [email password] :or {password "123123"} :as params}]
-  (when-not email
-    (throw (IllegalArgumentException. "email is mandatory")))
+  [& {:keys [email password]}]
+  (assert (string? email) "expected email")
+  (assert (string? password) "expected password")
 
-  (some-> main/system
+  (some-> sys/system
           (db/tx-run!
            (fn [{:keys [::db/conn] :as system}]
-             (let [password (derive-password password)]
-               (if (= email :all)
-                 (db/exec! conn ["update profile set password=?" password])
-                 (let [email (str/lower email)]
-                   (db/exec! conn ["update profile set password=? where email=?" password email]))))))))
+             (let [password (derive-password password)
+                   email    (str/lower email)]
+               (-> (db/exec-one! conn ["update profile set password=? where email=?" password email])
+                   (db/get-update-count)
+                   (pos?)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; FEATURES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(declare process-file!)
-
-(defn enable-objects-map-feature-on-file!
-  [file-id & {:as opts}]
-  (process-file! file-id feat.fdata/enable-objects-map opts))
-
-(defn enable-pointer-map-feature-on-file!
-  [file-id & {:as opts}]
-  (process-file! file-id feat.fdata/enable-pointer-map opts))
-
-(defn enable-path-data-feature-on-file!
-  [file-id & {:as opts}]
-  (process-file! file-id feat.fdata/enable-path-data opts))
-
-(defn enable-storage-features-on-file!
-  [file-id & {:as opts}]
-  (enable-objects-map-feature-on-file! file-id opts)
-  (enable-pointer-map-feature-on-file! file-id opts))
 
 (defn enable-team-feature!
   [team-id feature & {:keys [skip-check] :or {skip-check false}}]
@@ -173,7 +156,7 @@
               :hint (str "feature '" feature "' not supported")))
 
   (let [team-id (h/parse-uuid team-id)]
-    (db/tx-run! main/system
+    (db/tx-run! sys/system
                 (fn [{:keys [::db/conn]}]
                   (let [team     (-> (db/get conn :team {:id team-id})
                                      (update :features db/decode-pgarray #{}))
@@ -192,7 +175,7 @@
               :hint (str "feature '" feature "' not supported")))
 
   (let [team-id (h/parse-uuid team-id)]
-    (db/tx-run! main/system
+    (db/tx-run! sys/system
                 (fn [{:keys [::db/conn]}]
                   (let [team     (-> (db/get conn :team {:id team-id})
                                      (update :features db/decode-pgarray #{}))
@@ -233,7 +216,7 @@
               :code :incorrect-level
               :hint (str "level '" level "' not supported")))
 
-  (let [{:keys [::mbus/msgbus ::db/pool]} main/system
+  (let [{:keys [::mbus/msgbus ::db/pool]} sys/system
 
         send
         (fn [dest]
@@ -338,23 +321,26 @@
   collectable file-changes entry."
   [& {:keys [file-id label]}]
   (let [file-id (h/parse-uuid file-id)]
-    (db/tx-run! main/system fsnap/create-file-snapshot! {:file-id file-id :label label})))
+    (db/tx-run! sys/system
+                (fn [cfg]
+                  (let [file (bfc/get-file cfg file-id :realize? true)]
+                    (fsnap/create! cfg file {:label label :created-by "admin"}))))))
 
 (defn restore-file-snapshot!
   [file-id & {:keys [label id]}]
   (let [file-id     (h/parse-uuid file-id)
         snapshot-id (some-> id h/parse-uuid)]
-    (db/tx-run! main/system
+    (db/tx-run! sys/system
                 (fn [{:keys [::db/conn] :as system}]
                   (cond
                     (uuid? snapshot-id)
-                    (fsnap/restore-file-snapshot! system file-id snapshot-id)
+                    (fsnap/restore! system file-id snapshot-id)
 
                     (string? label)
                     (->> (h/search-file-snapshots conn #{file-id} label)
                          (map :id)
                          (first)
-                         (fsnap/restore-file-snapshot! system file-id))
+                         (fsnap/restore! system file-id))
 
                     :else
                     (throw (ex-info "snapshot id or label should be provided" {})))))))
@@ -362,15 +348,15 @@
 (defn list-file-snapshots!
   [file-id & {:as _}]
   (let [file-id (h/parse-uuid file-id)]
-    (db/tx-run! main/system
-                (fn [{:keys [::db/conn]}]
-                  (->> (fsnap/get-file-snapshots conn file-id)
-                       (print-table [:label :id :revn :created-at]))))))
+    (db/tx-run! sys/system
+                (fn [cfg]
+                  (->> (fsnap/get-visible-snapshots cfg file-id)
+                       (print-table [:label :id :revn :created-at :created-by]))))))
 
 (defn take-team-snapshot!
   [team-id & {:keys [label rollback?] :or {rollback? true}}]
   (let [team-id (h/parse-uuid team-id)]
-    (-> (assoc main/system ::db/rollback rollback?)
+    (-> (assoc sys/system ::db/rollback rollback?)
         (db/tx-run! h/take-team-snapshot! team-id label))))
 
 (defn restore-team-snapshot!
@@ -378,7 +364,7 @@
   exists for all files; if is not the case, an exception is raised."
   [team-id label & {:keys [rollback?] :or {rollback? true}}]
   (let [team-id (h/parse-uuid team-id)]
-    (-> (assoc main/system ::db/rollback rollback?)
+    (-> (assoc sys/system ::db/rollback rollback?)
         (db/tx-run! h/restore-team-snapshot! team-id label))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -390,7 +376,7 @@
   all contents of a file. Returns a list of errors."
   [file-id]
   (let [file-id (h/parse-uuid file-id)]
-    (db/tx-run! (assoc main/system ::db/rollback true)
+    (db/tx-run! (assoc sys/system ::db/rollback true)
                 (fn [system]
                   (let [file (bfc/get-file system file-id)
                         libs (bfc/get-resolved-file-libraries system file)]
@@ -401,7 +387,7 @@
   all contents of a file. Returns a list of errors."
   [file-id]
   (let [file-id (h/parse-uuid file-id)]
-    (db/tx-run! (assoc main/system ::db/rollback true)
+    (db/tx-run! (assoc sys/system ::db/rollback true)
                 (fn [system]
                   (try
                     (let [file (bfc/get-file system file-id)]
@@ -412,141 +398,150 @@
                         (println (sm/humanize-explain explain))
                         (ex/print-throwable cause))))))))
 
-(defn repair-file!
-  "Repair the list of errors detected by validation."
-  [file-id & {:keys [rollback?] :or {rollback? true} :as opts}]
-  (let [system  (assoc main/system ::db/rollback rollback?)
-        file-id (h/parse-uuid file-id)
-        opts    (assoc opts :with-libraries? true)]
-    (db/tx-run! system h/process-file! file-id fixes/repair-file opts)))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; PROCESSING
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(def sql:get-files
-  "SELECT id FROM file
-    WHERE deleted_at is NULL
-    ORDER BY created_at DESC")
+(defn repair-file!
+  "Repair the list of errors detected by validation."
+  [file-id & {:keys [rollback?] :or {rollback? true} :as options}]
+  (let [system  (assoc sys/system ::db/rollback rollback?)
+        file-id (h/parse-uuid file-id)
+        options (assoc options ::h/with-libraries? true)]
+    (db/tx-run! system h/process-file! file-id procs.file-repair/repair-file options)))
 
-(defn process-file!
+(defn update-file!
   "Apply a function to the file. Optionally save the changes or not.
   The function receives the decoded and migrated file data."
   [file-id update-fn & {:keys [rollback?] :or {rollback? true} :as opts}]
   (let [file-id (h/parse-uuid file-id)]
-    (db/tx-run! (assoc main/system ::db/rollback rollback?)
+    (db/tx-run! (assoc sys/system ::db/rollback rollback?)
                 (fn [system]
                   (binding [h/*system* system
                             db/*conn* (db/get-connection system)]
                     (h/process-file! system file-id update-fn opts))))))
 
-(defn process-team-files!
-  "Apply a function to each file of the specified team."
-  [team-id update-fn & {:keys [rollback? label] :or {rollback? true} :as opts}]
-  (let [team-id (h/parse-uuid team-id)
-        opts    (dissoc opts :label)]
-    (db/tx-run! (assoc main/system ::db/rollback rollback?)
-                (fn [{:keys [::db/conn] :as system}]
-                  (when (string? label)
-                    (h/take-team-snapshot! system team-id label))
+(defn process!
+  [& {:keys [max-items
+             max-jobs
+             rollback?
+             query
+             proc-fn
+             buffer]
+      :or {max-items Long/MAX_VALUE
+           rollback? true
+           max-jobs 1
+           buffer 128}
+      :as opts}]
 
-                  (binding [h/*system* system
-                            db/*conn* (db/get-connection system)]
-                    (->> (h/get-and-lock-team-files conn team-id)
-                         (reduce (fn [result file-id]
-                                   (if (h/process-file! system file-id update-fn opts)
-                                     (inc result)
-                                     result))
-                                 0)))))))
-
-(defn process-files!
-  "Apply a function to all files in the database"
-  [update-fn & {:keys [max-items
-                       max-jobs
-                       rollback?
-                       query]
-                :or {max-jobs 1
-                     max-items Long/MAX_VALUE
-                     rollback? true
-                     query sql:get-files}
-                :as opts}]
-
-  (l/dbg :hint "process:start"
+  (l/inf :hint "process start"
          :rollback rollback?
          :max-jobs max-jobs
          :max-items max-items)
 
   (let [tpoint    (ct/tpoint)
-        factory   (px/thread-factory :virtual false :prefix "penpot/file-process/")
-        executor  (px/cached-executor :factory factory)
-        sjobs     (ps/create :permits max-jobs)
+        max-jobs  (or max-jobs (px/get-available-processors))
+        query     (or query
+                      (:query (meta proc-fn))
+                      (throw (ex-info "missing query" {})))
+        query     (if (vector? query) query [query])
 
-        process-file
-        (fn [file-id idx tpoint]
-          (let [thread-id (px/get-thread-id)]
-            (try
-              (l/trc :hint "process:file:start"
-                     :tid thread-id
-                     :file-id (str file-id)
-                     :index idx)
-              (let [system (assoc main/system ::db/rollback rollback?)]
-                (db/tx-run! system (fn [system]
-                                     (binding [h/*system* system
-                                               db/*conn* (db/get-connection system)]
-                                       (h/process-file! system file-id update-fn opts)))))
+        proc-fn   (if (var? proc-fn)
+                    (deref proc-fn)
+                    proc-fn)
 
-              (catch Throwable cause
-                (l/wrn :hint "unexpected error on processing file (skiping)"
-                       :tid thread-id
-                       :file-id (str file-id)
-                       :index idx
-                       :cause cause))
-              (finally
-                (when-let [pause (:pause opts)]
-                  (Thread/sleep (int pause)))
+        in-ch     (sp/chan :buf buffer)
 
-                (ps/release! sjobs)
-                (let [elapsed (ct/format-duration (tpoint))]
-                  (l/trc :hint "process:file:end"
-                         :tid thread-id
-                         :file-id (str file-id)
-                         :index idx
-                         :elapsed elapsed))))))
+        worker-fn
+        (fn [worker-id]
+          (l/dbg :hint "worker started"
+                 :id worker-id)
 
-        process-file*
-        (fn [idx file-id]
-          (ps/acquire! sjobs)
-          (px/run! executor (partial process-file file-id idx (ct/tpoint)))
-          (inc idx))
+          (loop []
+            (when-let [[index item] (sp/<! in-ch)]
+              (l/dbg :hint "process item" :worker-id worker-id :index index :item item)
+              (try
+                (-> sys/system
+                    (assoc ::db/rollback rollback?)
+                    (db/tx-run! (fn [system]
+                                  (binding [h/*system* system
+                                            db/*conn* (db/get-connection system)]
+                                    (proc-fn system item opts)))))
 
-        process-files
+                (catch Throwable cause
+                  (l/wrn :hint "unexpected error on processing item (skiping)"
+                         :worker-id worker-id
+                         :item item
+                         :cause cause))
+                (finally
+                  (when-let [pause (:pause opts)]
+                    (Thread/sleep (int pause)))))
+
+              (recur)))
+
+          (l/dbg :hint "worker stoped"
+                 :id worker-id))
+
+        enqueue-item
+        (fn [index row]
+          (sp/>! in-ch [index (into {} row)])
+          (inc index))
+
+        process-items
         (fn [{:keys [::db/conn] :as system}]
           (db/exec! conn ["SET statement_timeout = 0"])
           (db/exec! conn ["SET idle_in_transaction_session_timeout = 0"])
 
-          (try
-            (->> (db/plan conn [query])
-                 (transduce (comp
-                             (take max-items)
-                             (map :id))
-                            (completing process-file*)
-                            0))
-            (finally
-              ;; Close and await tasks
-              (pu/close! executor))))]
+          (->> (db/plan conn query {:fetch-size (* max-jobs 3)})
+               (transduce (take max-items)
+                          (completing enqueue-item)
+                          0))
+          (sp/close! in-ch))
+
+        threads
+        (->> (range max-jobs)
+             (map (fn [idx]
+                    (px/fn->thread (partial worker-fn idx)
+                                   :name (str "pentpot/process/" idx))))
+             (doall))]
 
     (try
-      (db/tx-run! main/system process-files)
+      (db/tx-run! sys/system process-items)
+
+      ;; Await threads termination
+      (doseq [thread threads]
+        (px/await! thread))
 
       (catch Throwable cause
         (l/dbg :hint "process:error" :cause cause))
 
       (finally
         (let [elapsed (ct/format-duration (tpoint))]
-          (l/dbg :hint "process:end"
+          (l/inf :hint "process end"
                  :rollback rollback?
                  :elapsed elapsed))))))
 
+
+(defn process-file!
+  "A specialized, file specific process! alternative"
+  [& {:keys [id] :as opts}]
+  (let [id (h/parse-uuid id)]
+    (-> opts
+        (assoc :query ["select id from file where id = ?" id])
+        (assoc :max-items 1)
+        (assoc :max-jobs 1)
+        (process!))))
+
+(defn mark-file-as-trimmed
+  [id]
+  (let [id (h/parse-uuid id)]
+    (db/tx-run! sys/system (fn [cfg]
+                             (-> (db/update! cfg :file
+                                             {:has-media-trimmed true}
+                                             {:id id}
+                                             {::db/return-keys false})
+                                 (db/get-update-count)
+                                 (pos?))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; DELETE/RESTORE OBJECTS (WITH CASCADE, SOFT)
@@ -558,69 +553,39 @@
   (let [file-id (h/parse-uuid file-id)
         tnow    (ct/now)]
 
-    (audit/insert! main/system
-                   {::audit/name "delete-file"
-                    ::audit/type "action"
-                    ::audit/profile-id uuid/zero
-                    ::audit/props {:id file-id}
-                    ::audit/context {:triggered-by "srepl"
-                                     :cause "explicit call to delete-file!"}
-                    ::audit/tracked-at tnow})
-    (wrk/invoke! (-> main/system
+    (audit/insert sys/system
+                  {:name "delete-file"
+                   :type "action"
+                   :props {:id file-id}
+                   :context {:triggered-by "srepl"
+                             :cause "explicit call to delete-file!"}
+                   :tracked-at tnow})
+    (wrk/invoke! (-> sys/system
                      (assoc ::wrk/task :delete-object)
                      (assoc ::wrk/params {:object :file
                                           :deleted-at tnow
                                           :id file-id})))
     :deleted))
 
-(defn- restore-file*
-  [{:keys [::db/conn]} file-id]
-  (db/update! conn :file
-              {:deleted-at nil
-               :has-media-trimmed false}
-              {:id file-id})
-
-  ;; Fragments are not handled here because they
-  ;; use the database cascade operation and they
-  ;; are not marked for deletion with objects-gc
-  ;; task
-
-  (db/update! conn :file-media-object
-              {:deleted-at nil}
-              {:file-id file-id})
-
-  ;; Mark thumbnails to be deleted
-  (db/update! conn :file-thumbnail
-              {:deleted-at nil}
-              {:file-id file-id})
-
-  (db/update! conn :file-tagged-object-thumbnail
-              {:deleted-at nil}
-              {:file-id file-id})
-
-  :restored)
-
 (defn restore-file!
   "Mark a file and all related objects as not deleted"
   [file-id]
   (let [file-id (h/parse-uuid file-id)]
-    (db/tx-run! main/system
-                (fn [system]
-                  (when-let [file (some-> (db/get* system :file
-                                                   {:id file-id}
-                                                   {::db/remove-deleted false
-                                                    ::sql/columns [:id :name]})
-                                          (files/decode-row))]
-                    (audit/insert! system
-                                   {::audit/name "restore-file"
-                                    ::audit/type "action"
-                                    ::audit/profile-id uuid/zero
-                                    ::audit/props file
-                                    ::audit/context {:triggered-by "srepl"
-                                                     :cause "explicit call to restore-file!"}
-                                    ::audit/tracked-at (ct/now)})
+    (db/tx-run! sys/system
+                (fn [{:keys [::db/conn] :as system}]
+                  (when-let [file (db/get* system :file
+                                           {:id file-id}
+                                           {::db/remove-deleted false
+                                            ::sql/columns [:id :name]})]
+                    (audit/insert system
+                                  {:name "restore-file"
+                                   :type "action"
+                                   :props file
+                                   :context {:triggered-by "srepl"
+                                             :cause "explicit call to restore-file!"}})
 
-                    (restore-file* system file-id))))))
+                    (#'files/restore-files conn [file-id]))
+                  :restored))))
 
 (defn delete-project!
   "Mark a project for deletion"
@@ -628,16 +593,15 @@
   (let [project-id (h/parse-uuid project-id)
         tnow       (ct/now)]
 
-    (audit/insert! main/system
-                   {::audit/name "delete-project"
-                    ::audit/type "action"
-                    ::audit/profile-id uuid/zero
-                    ::audit/props {:id project-id}
-                    ::audit/context {:triggered-by "srepl"
-                                     :cause "explicit call to delete-project!"}
-                    ::audit/tracked-at tnow})
+    (audit/insert sys/system
+                  {:name "delete-project"
+                   :type "action"
+                   :props {:id project-id}
+                   :context {:triggered-by "srepl"
+                             :cause "explicit call to delete-project!"}
+                   :tracked-at tnow})
 
-    (wrk/invoke! (-> main/system
+    (wrk/invoke! (-> sys/system
                      (assoc ::wrk/task :delete-object)
                      (assoc ::wrk/params {:object :project
                                           :deleted-at tnow
@@ -653,7 +617,7 @@
   (doseq [{:keys [id]} (db/query conn :file
                                  {:project-id project-id}
                                  {::sql/columns [:id]})]
-    (restore-file* cfg id))
+    (#'files/restore-files conn [id]))
 
   :restored)
 
@@ -661,19 +625,17 @@
   "Mark a project and all related objects as not deleted"
   [project-id]
   (let [project-id (h/parse-uuid project-id)]
-    (db/tx-run! main/system
+    (db/tx-run! sys/system
                 (fn [system]
                   (when-let [project (db/get* system :project
                                               {:id project-id}
                                               {::db/remove-deleted false})]
-                    (audit/insert! system
-                                   {::audit/name "restore-project"
-                                    ::audit/type "action"
-                                    ::audit/profile-id uuid/zero
-                                    ::audit/props project
-                                    ::audit/context {:triggered-by "srepl"
-                                                     :cause "explicit call to restore-team!"}
-                                    ::audit/tracked-at (ct/now)})
+                    (audit/insert system
+                                  {:name "restore-project"
+                                   :type "action"
+                                   :props project
+                                   :context {:triggered-by "srepl"
+                                             :cause "explicit call to restore-team!"}})
 
                     (restore-project* system project-id))))))
 
@@ -683,16 +645,15 @@
   (let [team-id (h/parse-uuid team-id)
         tnow    (ct/now)]
 
-    (audit/insert! main/system
-                   {::audit/name "delete-team"
-                    ::audit/type "action"
-                    ::audit/profile-id uuid/zero
-                    ::audit/props {:id team-id}
-                    ::audit/context {:triggered-by "srepl"
-                                     :cause "explicit call to delete-profile!"}
-                    ::audit/tracked-at tnow})
+    (audit/insert sys/system
+                  {:name "delete-team"
+                   :type "action"
+                   :props {:id team-id}
+                   :context {:triggered-by "srepl"
+                             :cause "explicit call to delete-profile!"}
+                   :tracked-at tnow})
 
-    (wrk/invoke! (-> main/system
+    (wrk/invoke! (-> sys/system
                      (assoc ::wrk/task :delete-object)
                      (assoc ::wrk/params {:object :team
                                           :deleted-at tnow
@@ -720,20 +681,18 @@
   "Mark a team and all related objects as not deleted"
   [team-id]
   (let [team-id (h/parse-uuid team-id)]
-    (db/tx-run! main/system
+    (db/tx-run! sys/system
                 (fn [system]
                   (when-let [team (some-> (db/get* system :team
                                                    {:id team-id}
                                                    {::db/remove-deleted false})
                                           (teams/decode-row))]
-                    (audit/insert! system
-                                   {::audit/name "restore-team"
-                                    ::audit/type "action"
-                                    ::audit/profile-id uuid/zero
-                                    ::audit/props team
-                                    ::audit/context {:triggered-by "srepl"
-                                                     :cause "explicit call to restore-team!"}
-                                    ::audit/tracked-at (ct/now)})
+                    (audit/insert system
+                                  {:name "restore-team"
+                                   :type "action"
+                                   :props team
+                                   :context {:triggered-by "srepl"
+                                             :cause "explicit call to restore-team!"}})
 
                     (restore-team* system team-id))))))
 
@@ -743,15 +702,14 @@
   (let [profile-id (h/parse-uuid profile-id)
         tnow       (ct/now)]
 
-    (audit/insert! main/system
-                   {::audit/name "delete-profile"
-                    ::audit/type "action"
-                    ::audit/profile-id uuid/zero
-                    ::audit/context {:triggered-by "srepl"
-                                     :cause "explicit call to delete-profile!"}
-                    ::audit/tracked-at tnow})
+    (audit/insert sys/system
+                  {:name "delete-profile"
+                   :type "action"
+                   :context {:triggered-by "srepl"
+                             :cause "explicit call to delete-profile!"}
+                   :tracked-at tnow})
 
-    (wrk/invoke! (-> main/system
+    (wrk/invoke! (-> sys/system
                      (assoc ::wrk/task :delete-object)
                      (assoc ::wrk/params {:object :profile
                                           :deleted-at tnow
@@ -762,20 +720,18 @@
   "Mark a team and all related objects as not deleted"
   [profile-id]
   (let [profile-id (h/parse-uuid profile-id)]
-    (db/tx-run! main/system
+    (db/tx-run! sys/system
                 (fn [system]
                   (when-let [profile (some-> (db/get* system :profile
                                                       {:id profile-id}
                                                       {::db/remove-deleted false})
                                              (profile/decode-row))]
-                    (audit/insert! system
-                                   {::audit/name "restore-profile"
-                                    ::audit/type "action"
-                                    ::audit/profile-id uuid/zero
-                                    ::audit/props (audit/profile->props profile)
-                                    ::audit/context {:triggered-by "srepl"
-                                                     :cause "explicit call to restore-profile!"}
-                                    ::audit/tracked-at (ct/now)})
+                    (audit/insert system
+                                  {:name "restore-profile"
+                                   :type "action"
+                                   :props (audit/profile->props profile)
+                                   :context {:triggered-by "srepl"
+                                             :cause "explicit call to restore-profile!"}})
 
                     (db/update! system :profile
                                 {:deleted-at nil}
@@ -799,14 +755,14 @@
                                                   {::db/remove-deleted false})
                                          (profile/decode-row))]
                   (do
-                    (audit/insert! system
-                                   {::audit/name "delete-profile"
-                                    ::audit/type "action"
-                                    ::audit/profile-id (:id profile)
-                                    ::audit/tracked-at deleted-at
-                                    ::audit/props (audit/profile->props profile)
-                                    ::audit/context {:triggered-by "srepl"
-                                                     :cause "explicit call to delete-profiles-in-bulk!"}})
+                    (audit/insert system
+                                  {:name "delete-profile"
+                                   :type "action"
+                                   :profile-id (:id profile)
+                                   :tracked-at deleted-at
+                                   :props (audit/profile->props profile)
+                                   :context {:triggered-by "srepl"
+                                             :cause "explicit call to delete-profiles-in-bulk!"}})
                     (wrk/invoke! (-> system
                                      (assoc ::wrk/task :delete-object)
                                      (assoc ::wrk/params {:object :profile
@@ -837,9 +793,9 @@
 
 (defn process-deleted-profiles-cascade
   []
-  (->> (db/exec! main/system ["select id, deleted_at from profile where deleted_at is not null"])
+  (->> (db/exec! sys/system ["select id, deleted_at from profile where deleted_at is not null"])
        (run! (fn [{:keys [id deleted-at]}]
-               (wrk/invoke! (-> main/system
+               (wrk/invoke! (-> sys/system
                                 (assoc ::wrk/task :delete-object)
                                 (assoc ::wrk/params {:object :profile
                                                      :deleted-at deleted-at
@@ -847,9 +803,9 @@
 
 (defn process-deleted-teams-cascade
   []
-  (->> (db/exec! main/system ["select id, deleted_at from team where deleted_at is not null"])
+  (->> (db/exec! sys/system ["select id, deleted_at from team where deleted_at is not null"])
        (run! (fn [{:keys [id deleted-at]}]
-               (wrk/invoke! (-> main/system
+               (wrk/invoke! (-> sys/system
                                 (assoc ::wrk/task :delete-object)
                                 (assoc ::wrk/params {:object :team
                                                      :deleted-at deleted-at
@@ -857,9 +813,9 @@
 
 (defn process-deleted-projects-cascade
   []
-  (->> (db/exec! main/system ["select id, deleted_at from project where deleted_at is not null"])
+  (->> (db/exec! sys/system ["select id, deleted_at from project where deleted_at is not null"])
        (run! (fn [{:keys [id deleted-at]}]
-               (wrk/invoke! (-> main/system
+               (wrk/invoke! (-> sys/system
                                 (assoc ::wrk/task :delete-object)
                                 (assoc ::wrk/params {:object :project
                                                      :deleted-at deleted-at
@@ -867,17 +823,40 @@
 
 (defn process-deleted-files-cascade
   []
-  (->> (db/exec! main/system ["select id, deleted_at from file where deleted_at is not null"])
+  (->> (db/exec! sys/system ["select id, deleted_at from file where deleted_at is not null"])
        (run! (fn [{:keys [id deleted-at]}]
-               (wrk/invoke! (-> main/system
+               (wrk/invoke! (-> sys/system
                                 (assoc ::wrk/task :delete-object)
                                 (assoc ::wrk/params {:object :file
                                                      :deleted-at deleted-at
                                                      :id id})))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; SSO
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn add-sso-config
+  [& {:keys [base-uri client-id client-secret domain]}]
+
+  (assert (and (string? base-uri) (str/starts-with? base-uri "http")) "expected a valid base-uri")
+  (assert (string? client-id) "expected a valid client-id")
+  (assert (string? client-secret) "expected a valid client-secret")
+  (assert (string? domain) "expected a valid domain")
+  (db/insert! sys/system :sso-provider
+              {:id (uuid/next)
+               :type "oidc"
+               :client-id client-id
+               :client-secret client-secret
+               :domain domain
+               :base-uri base-uri}))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; MISC
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn decode-session-token
+  [token]
+  (session/decode-token sys/system token))
 
 (defn instrument-var
   [var]
@@ -902,7 +881,7 @@
 (defn duplicate-team
   [team-id & {:keys [name]}]
   (let [team-id (h/parse-uuid team-id)]
-    (db/tx-run! main/system
+    (db/tx-run! sys/system
                 (fn [{:keys [::db/conn] :as cfg}]
                   (db/exec-one! conn ["SET CONSTRAINTS ALL DEFERRED"])
                   (let [team (-> (assoc cfg ::bfc/timestamp (ct/now))
@@ -913,5 +892,4 @@
                       (let [params (-> rel
                                        (assoc :id (uuid/next))
                                        (assoc :team-id (:id team)))]
-                        (db/insert! conn :team-profile-rel params
-                                    {::db/return-keys false}))))))))
+                        (teams/add-profile-to-team! cfg params {::db/return-keys false}))))))))

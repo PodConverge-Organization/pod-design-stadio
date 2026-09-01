@@ -1,5 +1,47 @@
 # CHANGELOG
 
+
+## 1.2.0-RC1
+
+- Add the ability to add relations (with `addRelation` method)
+
+
+## 1.1.0
+
+- Same as 1.1.0-RC2
+
+
+## 1.1.0-RC2
+
+- Fix validation issue with several token nodes
+
+
+## 1.1.0-RC2
+
+- Add experimental addTokensLib method
+
+
+## 1.0.11
+
+- Set correct path if it is not provided on addComponent
+
+
+## 1.0.10
+
+- Enable variant/v1 feature by default
+- Add variant attrs handling to addComponent method
+
+
+## 1.0.9
+
+- Fix dependencies declaration on package.json
+
+
+## 1.0.8
+
+- Update penpot runtime
+
+
 ## 1.0.7
 
 - Add the ability to provide refereron creating build context

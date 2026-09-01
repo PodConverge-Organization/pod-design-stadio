@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.inspect.attributes.layout
   (:require-macros [app.main.style :as stl])
@@ -29,7 +29,10 @@
    :row-gap
    :column-gap
    :gap
-   :padding])
+   :padding-inline-start
+   :padding-inline-end
+   :padding-block-start
+   :padding-block-end])
 
 (mf/defc layout-block
   [{:keys [objects shape]}]
@@ -46,7 +49,7 @@
           [:> copy-button* {:data (css/get-css-property objects shape property)}
            [:div {:class (stl/css :button-children)} value]]]]))))
 
-(mf/defc layout-panel
+(mf/defc layout-panel*
   [{:keys [objects shapes]}]
   (let [shapes (->> shapes (filter ctl/any-layout?))]
 
@@ -54,7 +57,8 @@
       [:div {:class (stl/css :attributes-block)}
        [:> inspect-title-bar*
         {:title "Layout"
-         :class (stl/css :title-spacing-layout)}
+         :class (stl/css :title-wrapper)
+         :title-class (stl/css :layout-attr-title)}
 
         (when (= (count shapes) 1)
           [:> copy-button* {:data (css/get-shape-properties-css objects (first shapes) properties)

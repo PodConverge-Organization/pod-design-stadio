@@ -3,7 +3,9 @@ import { BasePage } from "./BasePage";
 export class RegisterPage extends BasePage {
   constructor(page) {
     super(page);
-    this.registerButton = page.getByRole("button", { name: "Create an account" });
+    this.registerButton = page.getByRole("button", {
+      name: "Create an account",
+    });
     this.password = page.getByLabel("Password");
     this.email = page.getByLabel("Work email");
     this.fullName = page.getByLabel("Full name");
@@ -27,8 +29,13 @@ export class RegisterPage extends BasePage {
     );
   }
 
+  static async init(page) {
+    await BasePage.init(page);
+  }
+
   static async initWithLoggedOutUser(page) {
-    await this.mockRPC(page, "get-profile", "get-profile-anonymous.json");
+    await BasePage.init(page);
+    await BasePage.mockRPC(page, "get-profile", "get-profile-anonymous.json");
   }
 }
 

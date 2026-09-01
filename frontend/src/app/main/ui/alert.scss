@@ -2,12 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) KALEIDOS INC
+// Copyright (c) KALEIDOS INC Sucursal en España SL
 
-@import "refactor/common-refactor.scss";
+@use "refactor/common-refactor.scss" as deprecated;
 
 .modal-overlay {
-  @extend .modal-overlay-base;
+  @extend %modal-overlay-base;
 
   &.transparent {
     background-color: transparent;
@@ -15,47 +15,50 @@
 }
 
 .modal-container {
-  @extend .modal-container-base;
+  @extend %modal-container-base;
 }
 
 .modal-header {
-  margin-bottom: $s-24;
+  margin-bottom: deprecated.$s-24;
 }
 
 .modal-title {
-  @include headlineMediumTypography;
+  @include deprecated.headline-medium-typography;
+
   color: var(--modal-title-foreground-color);
 }
 
 .modal-close-btn {
-  @extend .modal-close-btn-base;
+  @extend %modal-close-btn-base;
 }
 
 .modal-content {
-  @include bodyLargeTypography;
-  margin-bottom: $s-24;
+  @include deprecated.body-large-typography;
+
+  margin-bottom: deprecated.$s-24;
 }
 
 .action-buttons {
-  @extend .modal-action-btns;
+  @extend %modal-action-btns;
 }
 
 .cancel-button {
-  @extend .modal-cancel-btn;
+  @extend %modal-cancel-btn;
 }
 
 .accept-btn {
-  @extend .modal-accept-btn;
+  @extend %modal-accept-btn;
 
   &.danger {
-    @extend .modal-danger-btn;
+    @extend %modal-danger-btn;
   }
 }
 
 .modal-scd-msg,
 .modal-subtitle,
 .modal-msg {
-  @include bodyLargeTypography;
+  @include deprecated.body-large-typography;
+
   color: var(--modal-text-foreground-color);
   line-height: 1.5;
 }

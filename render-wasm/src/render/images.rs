@@ -2,6 +2,8 @@ use crate::math::Rect as MathRect;
 use crate::shapes::ImageFill;
 use crate::uuid::Uuid;
 
+use crate::error::Result;
+use crate::get_gpu_state;
 use skia_safe::gpu::{surfaces, Budgeted, DirectContext};
 use skia_safe::{self as skia, Codec, ISize};
 use std::collections::HashMap;
@@ -58,80 +60,174 @@ enum StoredImage {
 }
 
 pub struct ImageStore {
-    images: HashMap<Uuid, StoredImage>,
+    images: HashMap<(Uuid, bool), StoredImage>,
     context: Box<DirectContext>,
 }
 
+/// Creates a Skia image from an existing WebGL texture.
+/// This avoids re-decoding the image, as the browser has already decoded
+/// and uploaded it to the GPU.
+fn create_image_from_gl_texture(
+    context: &mut Box<DirectContext>,
+    texture_id: u32,
+    width: i32,
+    height: i32,
+) -> Result<Image> {
+    use skia_safe::gpu;
+    use skia_safe::gpu::gl::TextureInfo;
+
+    // Create a TextureInfo describing the existing GL texture
+    let texture_info = TextureInfo {
+        target: gl::TEXTURE_2D,
+        id: texture_id,
+        format: gl::RGBA8,
+        protected: gpu::Protected::No,
+    };
+
+    // Create a backend texture from the GL texture using the new API
+    let label = format!("shared_texture_{}", texture_id);
+    let backend_texture = unsafe {
+        gpu::backend_textures::make_gl((width, height), gpu::Mipmapped::No, texture_info, label)
+    };
+
+    // Create a Skia image from the backend texture
+    // Use TopLeft origin because HTML images have their origin at top-left,
+    // while WebGL textures traditionally use bottom-left
+    let image = Image::from_texture(
+        context.as_mut(),
+        &backend_texture,
+        gpu::SurfaceOrigin::TopLeft,
+        skia::ColorType::RGBA8888,
+        skia::AlphaType::Premul,
+        None,
+    )
+    .ok_or(crate::error::Error::CriticalError(
+        "Failed to create Skia image from GL texture".to_string(),
+    ))?;
+
+    Ok(image)
+}
+
+// Decode and upload to GPU
+fn decode_image(context: &mut Box<DirectContext>, raw_data: &[u8]) -> Option<Image> {
+    let data = unsafe { skia::Data::new_bytes(raw_data) };
+    let codec = Codec::from_data(&data)?;
+    let image = Image::from_encoded(&data)?;
+
+    let mut dimensions = codec.dimensions();
+    if codec.origin().swaps_width_height() {
+        dimensions.width = codec.dimensions().height;
+        dimensions.height = codec.dimensions().width;
+    }
+
+    let image_info = skia::ImageInfo::new_n32_premul(dimensions, None);
+
+    let mut surface = surfaces::render_target(
+        context,
+        Budgeted::Yes,
+        &image_info,
+        None,
+        None,
+        None,
+        true,
+        false,
+    )?;
+
+    let dest_rect: MathRect =
+        MathRect::from_xywh(0.0, 0.0, dimensions.width as f32, dimensions.height as f32);
+
+    surface
+        .canvas()
+        .draw_image_rect(&image, None, dest_rect, &skia::Paint::default());
+
+    Some(surface.image_snapshot())
+}
+
 impl ImageStore {
-    pub fn new(context: DirectContext) -> Self {
+    pub fn new() -> Self {
+        let gpu_state = get_gpu_state();
+        let context = &gpu_state.context;
         Self {
             images: HashMap::with_capacity(2048),
-            context: Box::new(context),
+            context: Box::new(context.clone()),
         }
     }
 
-    pub fn add(&mut self, id: Uuid, image_data: &[u8]) -> Result<(), String> {
-        if self.images.contains_key(&id) {
-            return Err("Image already exists".to_string());
+    pub fn add(
+        &mut self,
+        id: Uuid,
+        is_thumbnail: bool,
+        image_data: &[u8],
+    ) -> crate::error::Result<()> {
+        let key = (id, is_thumbnail);
+
+        if self.images.contains_key(&key) {
+            return Ok(());
         }
 
-        self.images
-            .insert(id, StoredImage::Raw(image_data.to_vec()));
+        let raw_data = image_data.to_vec();
+
+        if let Some(gpu_image) = decode_image(&mut self.context, &raw_data) {
+            self.images.insert(key, StoredImage::Gpu(gpu_image));
+        } else {
+            self.images.insert(key, StoredImage::Raw(raw_data));
+        }
         Ok(())
     }
 
-    pub fn contains(&self, id: &Uuid) -> bool {
-        self.images.contains_key(id)
+    /// Creates a Skia image from an existing WebGL texture, avoiding re-decoding.
+    /// This is much more efficient as it reuses the texture that was already
+    /// decoded and uploaded to GPU by the browser.
+    pub fn add_image_from_gl_texture(
+        &mut self,
+        id: Uuid,
+        is_thumbnail: bool,
+        texture_id: u32,
+        width: i32,
+        height: i32,
+    ) -> Result<()> {
+        let key = (id, is_thumbnail);
+
+        if self.images.contains_key(&key) {
+            return Ok(());
+        }
+
+        // Create a Skia image from the existing GL texture
+        let image = create_image_from_gl_texture(&mut self.context, texture_id, width, height)?;
+        self.images.insert(key, StoredImage::Gpu(image));
+
+        Ok(())
+    }
+
+    pub fn contains(&self, id: &Uuid, is_thumbnail: bool) -> bool {
+        self.images.contains_key(&(*id, is_thumbnail))
     }
 
     pub fn get(&mut self, id: &Uuid) -> Option<&Image> {
+        // Try to get full image first, fallback to thumbnail
+        let has_full = self.images.contains_key(&(*id, false));
+        if has_full {
+            self.get_internal(id, false)
+        } else {
+            self.get_internal(id, true)
+        }
+    }
+
+    pub fn get_cpu_image(&mut self, id: &Uuid) -> Option<Image> {
+        let gpu_image = self.get(id)?.clone();
+        gpu_image.make_non_texture_image(self.context.as_mut())
+    }
+
+    fn get_internal(&mut self, id: &Uuid, is_thumbnail: bool) -> Option<&Image> {
+        let key = (*id, is_thumbnail);
         // Use entry API to mutate the HashMap in-place if needed
-        if let Some(entry) = self.images.get_mut(id) {
+        if let Some(entry) = self.images.get_mut(&key) {
             match entry {
                 StoredImage::Gpu(ref img) => Some(img),
                 StoredImage::Raw(raw_data) => {
-                    // Decode and upload to GPU
-                    let data = unsafe { skia::Data::new_bytes(raw_data) };
-                    let codec = Codec::from_data(data.clone())?;
-                    let image = Image::from_encoded(data.clone())?;
-
-                    let mut dimensions = codec.dimensions();
-                    if codec.origin().swaps_width_height() {
-                        dimensions.width = codec.dimensions().height;
-                        dimensions.height = codec.dimensions().width;
-                    }
-
-                    let image_info = skia::ImageInfo::new_n32_premul(dimensions, None);
-
-                    let mut surface = surfaces::render_target(
-                        &mut self.context,
-                        Budgeted::Yes,
-                        &image_info,
-                        None,
-                        None,
-                        None,
-                        true,
-                        false,
-                    )?;
-
-                    let dest_rect: MathRect = MathRect::from_xywh(
-                        0.0,
-                        0.0,
-                        dimensions.width as f32,
-                        dimensions.height as f32,
-                    );
-
-                    surface.canvas().draw_image_rect(
-                        &image,
-                        None,
-                        dest_rect,
-                        &skia::Paint::default(),
-                    );
-
-                    let gpu_image = surface.image_snapshot();
-
-                    // Replace raw data with GPU image
+                    let gpu_image = decode_image(&mut self.context, raw_data)?;
                     *entry = StoredImage::Gpu(gpu_image);
+
                     if let StoredImage::Gpu(ref img) = entry {
                         Some(img)
                     } else {

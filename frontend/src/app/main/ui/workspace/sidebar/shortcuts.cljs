@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.workspace.sidebar.shortcuts
   (:require-macros [app.main.style :as stl])
@@ -17,17 +17,19 @@
    [app.main.data.workspace.path.shortcuts]
    [app.main.data.workspace.shortcuts]
    [app.main.store :as st]
-   [app.main.ui.components.search-bar :refer [search-bar]]
-   [app.main.ui.icons :as i]
+   [app.main.ui.components.search-bar :refer [search-bar*]]
+   [app.main.ui.ds.foundations.assets.icon :as i :refer [icon*]]
+   [app.main.ui.ds.product.panel-title :refer [panel-title*]]
    [app.util.dom :as dom]
    [app.util.i18n :refer [tr]]
    [app.util.strings :refer [matches-search]]
    [clojure.set :as set]
    [clojure.string]
+   [cuerdas.core :as str]
    [rumext.v2 :as mf]))
 
-(mf/defc converted-chars
-  [{:keys [char command] :as props}]
+(mf/defc converted-chars*
+  [{:keys [char command]}]
   (let [modified-keys {:up    ds/up-arrow
                        :down  ds/down-arrow
                        :left  ds/left-arrow
@@ -92,7 +94,7 @@
     (tr "shortcuts.clear-undo")
     (tr "shortcuts.copy")
     (tr "shortcuts.copy-link")
-    (tr "shortcuts.create-component")
+    (tr "shortcuts.create-component-variant")
     (tr "shortcuts.create-new-project")
     (tr "shortcuts.cut")
     (tr "shortcuts.decrease-zoom")
@@ -109,6 +111,8 @@
     (tr "shortcuts.duplicate")
     (tr "shortcuts.escape")
     (tr "shortcuts.export-shapes")
+    (tr "shortcuts.find")
+    (tr "shortcuts.find-and-replace")
     (tr "shortcuts.fit-all")
     (tr "shortcuts.flip-horizontal")
     (tr "shortcuts.flip-vertical")
@@ -124,10 +128,6 @@
     (tr "shortcuts.insert-image")
     (tr "shortcuts.italic")
     (tr "shortcuts.join-nodes")
-    (tr "shortcuts.letter-spacing-dec")
-    (tr "shortcuts.letter-spacing-inc")
-    (tr "shortcuts.line-height-dec")
-    (tr "shortcuts.line-height-inc")
     (tr "shortcuts.line-through")
     (tr "shortcuts.make-corner")
     (tr "shortcuts.make-curve")
@@ -162,6 +162,7 @@
     (tr "shortcuts.open-viewer")
     (tr "shortcuts.open-workspace")
     (tr "shortcuts.paste")
+    (tr "shortcuts.paste-replace")
     (tr "shortcuts.prev-frame")
     (tr "shortcuts.redo")
     (tr "shortcuts.rename")
@@ -180,10 +181,6 @@
     (tr "shortcuts.start-editing")
     (tr "shortcuts.start-measure")
     (tr "shortcuts.stop-measure")
-    (tr "shortcuts.text-align-center")
-    (tr "shortcuts.text-align-justify")
-    (tr "shortcuts.text-align-left")
-    (tr "shortcuts.text-align-right")
     (tr "shortcuts.thumbnail-set")
     (tr "shortcuts.toggle-alignment")
     (tr "shortcuts.toggle-assets")
@@ -237,8 +234,8 @@
             (assoc acc subsection {:children shortcuts-by-subsection})))]
     (reduce reduce-sc {} subsections)))
 
-(mf/defc shortcuts-keys
-  [{:keys [content command] :as props}]
+(mf/defc shortcuts-keys*
+  [{:keys [content command]}]
   (let [managed-list    (if (coll? content)
                           content
                           (conj () content))
@@ -250,26 +247,26 @@
         penultimate     (last short-char-list)]
     [:span {:class (stl/css :keys)}
      (for [chars short-char-list]
-       [:*
+       [:* {:key (str/join chars)}
         (for [char chars]
-          [:& converted-chars {:key (dm/str char "-" (name command))
-                               :char char
-                               :command command}])
+          [:> converted-chars* {:key (dm/str char "-" (name command))
+                                :char char
+                                :command command}])
         (when (not= chars penultimate) [:span {:class (stl/css :space)} ","])])
      (when (not= last-element penultimate)
        [:*
         [:span {:class (stl/css :space)} (tr "shortcuts.or")]
         (for [char last-element]
-          [:& converted-chars {:key (dm/str char "-" (name command))
-                               :char char
-                               :command command}])])]))
+          [:> converted-chars* {:key (dm/str char "-" (name command))
+                                :char char
+                                :command command}])])]))
 
-(mf/defc shortcut-row
-  [{:keys [elements filter-term match-section? match-subsection?] :as props}]
+(mf/defc shortcut-row*
+  [{:keys [elements filter-term is-match-section is-match-subsection]}]
   (let [shortcut-name         (keys elements)
         shortcut-translations (map #(translation-keyname :sc %) shortcut-name)
         match-shortcut?       (some #(matches-search % @filter-term) shortcut-translations)
-        filtered              (if (and (or match-section? match-subsection?) (not match-shortcut?))
+        filtered              (if (and (or is-match-section is-match-subsection) (not match-shortcut?))
                                 shortcut-translations
                                 (filter #(matches-search % @filter-term) shortcut-translations))
         sorted-filtered       (sort filtered)]
@@ -283,22 +280,22 @@
                :key command-translate}
           [:span {:class (stl/css :command-name)}
            command-translate]
-          [:& shortcuts-keys {:content content
-                              :command command}]]))]))
+          [:> shortcuts-keys* {:content content
+                               :command command}]]))]))
 
-(mf/defc section-title
-  [{:keys [is-visible? name is-sub?] :as props}]
-  [:div {:class (if is-sub?
+(mf/defc section-title*
+  [{:keys [name is-visible is-sub]}]
+  [:div {:class (if is-sub
                   (stl/css :subsection-title)
                   (stl/css :section-title))}
-   [:span {:class (stl/css-case :open is-visible?
-                                :collapsed-shortcuts true)} i/arrow]
-   [:span {:class (if is-sub?
+   [:> icon* {:icon-id (if is-visible i/arrow-down i/arrow-right)
+              :size "s"}]
+   [:span {:class (if is-sub
                     (stl/css :subsection-name)
                     (stl/css :section-name))} name]])
 
-(mf/defc shortcut-subsection
-  [{:keys [subsections manage-sections filter-term match-section? open-sections] :as props}]
+(mf/defc shortcut-subsection*
+  [{:keys [subsections manage-sections filter-term is-match-section open-sections]}]
   (let [subsections-names       (keys subsections)
         subsection-translations (if (= :none (first subsections-names))
                                   (map #(translation-keyname :sc %) subsections-names)
@@ -307,10 +304,10 @@
     ;; Basics section is treated different because it has no sub sections
     (if (= :none (first subsections-names))
       (let [basic-shortcuts (:none subsections)]
-        [:& shortcut-row {:elements (:children basic-shortcuts)
-                          :filter-term filter-term
-                          :match-section? match-section?
-                          :match-subsection? true}])
+        [:> shortcut-row* {:elements (:children basic-shortcuts)
+                           :filter-term filter-term
+                           :is-match-section is-match-section
+                           :is-match-subsection true}])
 
       [:ul {:class (stl/css :subsection-menu)}
        (for [sub-translated sorted-translations]
@@ -320,21 +317,21 @@
                match-subsection?   (matches-search (translation-keyname :sub-sec sub-name) @filter-term)
                shortcut-names      (map #(translation-keyname :sc %) (keys (:children sub-info)))
                match-shortcuts?    (some #(matches-search % @filter-term) shortcut-names)]
-           (when (or match-subsection? match-shortcuts? match-section?)
+           (when (or match-subsection? match-shortcuts? is-match-section)
              [:li {:key sub-translated
                    :on-click (manage-sections (:id sub-info))}
-              [:& section-title {:name sub-translated
-                                 :is-sub? true
-                                 :is-visible? visible?}]
+              [:> section-title* {:name sub-translated
+                                  :is-visible visible?
+                                  :is-sub true}]
 
               [:div {:style {:display (if visible? "initial" "none")}}
-               [:& shortcut-row {:elements (:children sub-info)
-                                 :filter-term filter-term
-                                 :match-section?  match-section?
-                                 :match-subsection? match-subsection?}]]])))])))
+               [:> shortcut-row* {:elements (:children sub-info)
+                                  :filter-term filter-term
+                                  :is-match-section is-match-section
+                                  :is-match-subsection match-subsection?}]]])))])))
 
-(mf/defc shortcut-section
-  [{:keys [section manage-sections open-sections filter-term] :as props}]
+(mf/defc shortcut-section*
+  [{:keys [section manage-sections open-sections filter-term]}]
   (let [[section-key section-info] section
         section-id          (:id section-info)
         section-translation (translation-keyname :sec section-key)
@@ -353,16 +350,16 @@
     (when (or match-section? match-subsection? match-shortcut?)
       [:div {:class (stl/css :section)
              :on-click (manage-sections section-id)}
-       [:& section-title {:is-visible? visible?
-                          :is-sub? false
-                          :name    section-translation}]
+       [:> section-title* {:name section-translation
+                           :is-visible visible?
+                           :is-sub false}]
 
        [:div {:style {:display (if visible? "initial" "none")}}
-        [:& shortcut-subsection {:subsections     subsections
-                                 :open-sections   open-sections
-                                 :manage-sections manage-sections
-                                 :match-section?  match-section?
-                                 :filter-term     filter-term}]]])))
+        [:> shortcut-subsection* {:subsections subsections
+                                  :open-sections open-sections
+                                  :manage-sections manage-sections
+                                  :is-match-section match-section?
+                                  :filter-term filter-term}]]])))
 
 (mf/defc shortcuts-container*
   [{:keys [class]}]
@@ -489,29 +486,25 @@
            (reset! open-sections [[1]])
            (reset! filter-term "")))]
 
-    (mf/with-effect []
-      (dom/focus! (dom/get-element "shortcut-search")))
-
     [:div {:class (dm/str class " " (stl/css :shortcuts))}
-     [:div {:class (stl/css :shortcuts-header)}
-      [:div {:class (stl/css :shortcuts-title)} (tr "shortcuts.title")]
-      [:div {:class (stl/css :shortcuts-close-button)
-             :on-click close-fn}
-       i/close]]
-     [:div {:class (stl/css :search-field)}
+     [:> panel-title* {:class (stl/css :shortcuts-title)
+                       :text (tr "shortcuts.title")
+                       :on-close close-fn}]
 
-      [:& search-bar {:on-change on-search-term-change-2
-                      :clear-action on-search-clear-click
-                      :value @filter-term
-                      :placeholder (tr "shortcuts.title")
-                      :icon (mf/html [:span {:class (stl/css :search-icon)} i/search])}]]
+     [:div {:class (stl/css :search-field)}
+      [:> search-bar* {:on-change on-search-term-change-2
+                       :on-clear on-search-clear-click
+                       :value @filter-term
+                       :placeholder (tr "shortcuts.title")
+                       :icon-id i/search
+                       :auto-focus true}]]
 
      (if match-any?
        [:div {:class (stl/css :shortcuts-list)}
         (for [section all-shortcuts]
-          [:& shortcut-section
-           {:section section
-            :manage-sections manage-sections
-            :open-sections open-sections
-            :filter-term filter-term}])]
+          [:> shortcut-section* {:key (->> section second :id first)
+                                 :section section
+                                 :manage-sections manage-sections
+                                 :open-sections open-sections
+                                 :filter-term filter-term}])]
        [:div {:class (stl/css :not-found)} (tr "shortcuts.not-found")])]))

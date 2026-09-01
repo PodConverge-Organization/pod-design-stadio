@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.data.workspace.text.shortcuts
   (:require
@@ -16,7 +16,8 @@
    [app.main.fonts :as fonts]
    [app.main.refs :as refs]
    [app.main.store :as st]
-   [cuerdas.core :as str]))
+   [cuerdas.core :as str]
+   [okulary.core :as l]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Shortcuts
@@ -111,14 +112,24 @@
        :font-weight (:weight new-variant)
        :font-style (:style new-variant)})))
 
-
 (defn calculate-text-values
   [shape]
-  (let [state-map    (if (features/active-feature? @st/state "text-editor/v2")
+  (let [state-map    (cond
+                       (features/active-feature? @st/state "text-editor-wasm/v1")
+                       (deref refs/workspace-wasm-editor-styles)
+
+                       (features/active-feature? @st/state "text-editor/v2")
                        (deref refs/workspace-v2-editor-state)
+
+                       :else
                        (deref refs/workspace-editor-state))
+
+        editor-styles (when (features/active-feature? @st/state "text-editor-wasm/v1")
+                        (get state-map (:id shape)))
+
         editor-state  (when-not (features/active-feature? @st/state "text-editor/v2")
                         (get state-map (:id shape)))
+
         editor-instance (when (features/active-feature? @st/state "text-editor/v2")
                           (deref refs/workspace-editor))]
     (d/merge
@@ -126,12 +137,14 @@
       {:shape shape
        :attrs txt/root-attrs})
      (dwt/current-paragraph-values
-      {:editor-state editor-state
+      {:editor-styles editor-styles
+       :editor-state editor-state
        :editor-instance editor-instance
        :shape shape
        :attrs txt/paragraph-attrs})
      (dwt/current-text-values
-      {:editor-state editor-state
+      {:editor-styles editor-styles
+       :editor-state editor-state
        :editor-instance editor-instance
        :shape shape
        :attrs txt/text-node-attrs}))))
@@ -139,21 +152,11 @@
 (defn- update-attrs [shape props]
   (let [text-values    (calculate-text-values shape)
         font-size      (d/parse-double (:font-size text-values))
-        line-height    (d/parse-double (:line-height text-values))
-        letter-spacing (d/parse-double (:letter-spacing text-values))
         props (cond
                 (:font-size-inc props)
                 {:font-size (str (inc font-size))}
                 (:font-size-dec props)
                 {:font-size (str (dec font-size))}
-                (:line-height-inc props)
-                {:line-height (str (+ line-height 0.1))}
-                (:line-height-dec props)
-                {:line-height (str (- line-height 0.1))}
-                (:letter-spacing-inc props)
-                {:letter-spacing (str (+ letter-spacing 0.1))}
-                (:letter-spacing-dec props)
-                {:letter-spacing (str (- letter-spacing 0.1))}
                 (= (:text-decoration props) "toggle-underline") ;;toggle
                 (if (= (:text-decoration text-values) "underline")
                   {:text-decoration "none"}
@@ -196,50 +199,42 @@
       :else
       props)))
 
+(def ^:private selected-shapes-with-children
+  "A derived state that resolves to a lazy sequence of all selected
+  shapes and its children."
+  (l/derived
+   (fn [{:keys [objects selected]}]
+     (let [xform (comp (remove nil?)
+                       (mapcat #(cfh/get-children-ids objects %)))
+           shapes (into selected xform selected)]
+       (sequence (keep (d/getf objects)) shapes)))
+   ;; WORKAROUND: we should not use it here, but util we restructure
+   ;; this, the simplest way is just deref private var
+   @#'refs/selected-shapes-data))
+
 (defn- update-attrs-when-no-readonly [props]
   (let [undo-id     (js/Symbol)
 
         can-edit?   (:can-edit (deref refs/permissions))
         read-only?  (deref refs/workspace-read-only?)
 
-        text-shapes (->> (deref refs/selected-shapes-with-children)
+        text-shapes (->> (deref selected-shapes-with-children)
                          (filter cfh/text-shape?)
                          (not-empty))
-
-        ;; Check if we're actually editing text content (not just selecting text shapes)
-        ;; Handle both text-editor/v1 and text-editor/v2
-        editing-text? (if (features/active-feature? @st/state "text-editor/v2")
-                        (some? (deref refs/workspace-v2-editor-state))
-                        (some? (deref refs/workspace-editor)))
 
         props       (if (> (count text-shapes) 1)
                       (blend-props text-shapes props)
                       props)]
 
-    (when (and can-edit? (not read-only?) text-shapes editing-text?)
+    (when (and can-edit?
+               (not read-only?)
+               (some? text-shapes))
       (st/emit! (dwu/start-undo-transaction undo-id))
       (run! #(update-attrs % props) text-shapes)
       (st/emit! (dwu/commit-undo-transaction undo-id)))))
 
 (def shortcuts
-  {:text-align-left    {:tooltip (ds/meta (ds/alt "L"))
-                        :command (ds/c-mod "alt+l")
-                        :subsections [:text-editor]
-                        :fn #(update-attrs-when-no-readonly {:text-align "left"})}
-   :text-align-right   {:tooltip (ds/meta (ds/alt "R"))
-                        :command (ds/c-mod "alt+r")
-                        :subsections [:text-editor]
-                        :fn #(update-attrs-when-no-readonly {:text-align "right"})}
-   :text-align-center  {:tooltip (ds/meta (ds/alt "T"))
-                        :command (ds/c-mod "alt+t")
-                        :subsections [:text-editor]
-                        :fn #(update-attrs-when-no-readonly {:text-align "center"})}
-   :text-align-justify {:tooltip (ds/meta (ds/alt "J"))
-                        :command (ds/c-mod "alt+j")
-                        :subsections [:text-editor]
-                        :fn #(update-attrs-when-no-readonly {:text-align "justify"})}
-
-   :underline     {:tooltip (ds/meta "U")
+  {:underline     {:tooltip (ds/meta "U")
                    :command (ds/c-mod "u")
                    :subsections [:text-editor]
                    :fn #(update-attrs-when-no-readonly {:text-decoration "toggle-underline"})}
@@ -249,35 +244,15 @@
                    :subsections [:text-editor]
                    :fn #(update-attrs-when-no-readonly {:text-decoration "toggle-line-through"})}
 
-   :font-size-inc {:tooltip (ds/meta-shift ds/right-arrow)
-                   :command (ds/c-mod "shift+right")
+   :font-size-inc {:tooltip (ds/meta-shift ">")
+                   :command (ds/c-mod "shift+.")
                    :subsections [:text-editor]
                    :fn #(update-attrs-when-no-readonly {:font-size-inc true})}
 
-   :font-size-dec {:tooltip (ds/meta-shift ds/left-arrow)
-                   :command (ds/c-mod "shift+left")
+   :font-size-dec {:tooltip (ds/meta-shift "<")
+                   :command (ds/c-mod "shift+,")
                    :subsections [:text-editor]
                    :fn #(update-attrs-when-no-readonly {:font-size-dec true})}
-
-   :line-height-inc {:tooltip (ds/alt-shift ds/up-arrow)
-                     :command (ds/a-mod "shift+up")
-                     :subsections [:text-editor]
-                     :fn #(update-attrs-when-no-readonly {:line-height-inc true})}
-
-   :line-height-dec {:tooltip (ds/alt-shift ds/down-arrow)
-                     :command (ds/a-mod "shift+down")
-                     :subsections [:text-editor]
-                     :fn #(update-attrs-when-no-readonly {:line-height-dec true})}
-
-   :letter-spacing-inc {:tooltip (ds/alt ds/up-arrow)
-                        :command (ds/a-mod "up")
-                        :subsections [:text-editor]
-                        :fn #(update-attrs-when-no-readonly {:letter-spacing-inc true})}
-
-   :letter-spacing-dec {:tooltip (ds/alt ds/down-arrow)
-                        :command (ds/a-mod "down")
-                        :subsections [:text-editor]
-                        :fn #(update-attrs-when-no-readonly {:letter-spacing-dec true})}
 
    :bold     {:tooltip (ds/meta "b")
               :command (ds/c-mod "b")

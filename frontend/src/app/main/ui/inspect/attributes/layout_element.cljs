@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.ui.inspect.attributes.layout-element
   (:require-macros [app.main.style :as stl])
@@ -11,7 +11,7 @@
    [app.common.data.macros :as dm]
    [app.common.types.shape.layout :as ctl]
    [app.main.ui.components.copy-button :refer [copy-button*]]
-   [app.main.ui.components.title-bar :refer [title-bar]]
+   [app.main.ui.components.title-bar :refer [title-bar*]]
    [app.main.ui.inspect.attributes.common :as cmm]
    [app.util.code-gen.style-css :as css]
    [rumext.v2 :as mf]))
@@ -44,7 +44,7 @@
           [:> copy-button* {:data (css/get-css-property objects shape property)}
            [:div {:class (stl/css :button-children)} value]]]]))))
 
-(mf/defc layout-element-panel
+(mf/defc layout-element-panel*
   [{:keys [objects shapes]}]
   (let [shapes (->> shapes (filter #(ctl/any-layout-immediate-child? objects %)))
         only-flex? (every? #(ctl/flex-layout-immediate-child? objects %) shapes)
@@ -61,15 +61,16 @@
           only-flex?
           "Flex element"
           only-grid?
-          "Flex element"
+          "Grid element"
           :else
           "Layout element")]
 
     (when some-layout-prop?
       [:div {:class (stl/css :attributes-block)}
-       [:& title-bar {:collapsable false
-                      :title       menu-title
-                      :class       (stl/css :title-spacing-layout-element)}
+       [:> title-bar* {:collapsable false
+                       :title       menu-title
+                       :class       (stl/css :title-wrapper)
+                       :title-class (stl/css :layout-element-attr-title)}
         (when (= (count shapes) 1)
           [:> copy-button* {:data  (css/get-shape-properties-css objects (first shapes) properties)
                             :class (stl/css :copy-btn-title)}])]

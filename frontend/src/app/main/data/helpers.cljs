@@ -2,17 +2,18 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.data.helpers
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.files.helpers :as cfh]
+   [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
-   [clojure.string :as str]
-   [app.common.types.path :as path]))
+   [app.common.types.path :as path]
+   [clojure.string :as str]))
 
 (defn lookup-profile
   ([state]
@@ -70,14 +71,18 @@
    (process-selected objects selected nil))
 
   ([objects selected {:keys [omit-blocked?] :or {omit-blocked? false}}]
-   (letfn [(selectable? [id]
-             (and (contains? objects id)
-                  (or (not omit-blocked?)
-                      (not (dm/get-in objects [id :blocked] false)))))]
-     (let [selected (->> selected (cfh/clean-loops objects))]
-       (into (d/ordered-set)
-             (filter selectable?)
-             selected)))))
+   (let [selectable?
+         (fn [id]
+           (and (contains? objects id)
+                (or (not omit-blocked?)
+                    (not (dm/get-in objects [id :blocked] false)))))
+
+         selected
+         (cfh/clean-loops objects selected)]
+
+     (into (d/ordered-set)
+           (filter selectable?)
+           selected))))
 
 (defn split-text-shapes
   "Split text shapes from non-text shapes"
@@ -257,7 +262,7 @@
    (let [kstr (if (keyword? key) (name key) (str key))
 
          ;; 1) Try direct JS path first (works when shape and plugin-data are native JS objects)
-         pd-js    (or (aget shape "plugin-data"))
+         pd-js    (aget shape "plugin-data")
          ns-js    (when (and ns pd-js) (aget pd-js ns))
          val-js   (cond
                     (and ns-js (some? ns-js)) (or (aget ns-js kstr) (aget ns-js (name (keyword kstr))))
@@ -427,3 +432,12 @@
                  (let [shape (get objects id)]
                    (and shape (shape-is-protected-print-area? shape objects)))))
        (into [])))
+
+(defn get-selrect
+  [selrect-transform shape]
+  (if (some? selrect-transform)
+    (let [{:keys [center width height transform]} selrect-transform]
+      [(gsh/center->rect center width height)
+       (gmt/transform-in center transform)])
+    [(dm/get-prop shape :selrect)
+     (gsh/transform-matrix shape)]))

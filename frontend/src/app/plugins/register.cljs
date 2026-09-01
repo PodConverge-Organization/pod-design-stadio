@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.plugins.register
   (:require
@@ -10,14 +10,35 @@
    [app.common.data.macros :as dm]
    [app.common.schema :as sm]
    [app.common.types.plugins :as ctp]
+   [app.common.uri :as u]
    [app.common.uuid :as uuid]
+   [app.main.refs :as refs]
    [app.main.repo :as rp]
    [app.main.store :as st]
    [app.plugins.core :as pc]
    [app.util.object :as obj]
+   [beicon.v2.core :as rx]
    [potok.v2.core :as ptk]
-   [app.main.refs :as refs]
-   [beicon.v2.core :as rx]))
+   [promesa.core :as p]))
+
+;; Needs to be here because moving it to `app.main.data.workspace.mcp` will
+;; cause a circular dependency
+(def mcp-plugin-id "96dfa740-005d-8020-8007-55ede24a2bae")
+
+;; Promise that resolves when plugins runtime is initialized.
+;; Lives here to avoid circular dependency: workspace.mcp -> app.plugins -> app.plugins.api -> workspace
+(defonce ^:private runtime-ready-promise (p/deferred))
+
+(defn wait-for-runtime
+  "Returns a promise that resolves when plugins runtime is initialized."
+  []
+  runtime-ready-promise)
+
+(defn signal-runtime-ready
+  "Signals that plugins runtime has been initialized. Called by app.plugins/init-plugins-runtime."
+  []
+  (when (p/pending? runtime-ready-promise)
+    (p/resolve! runtime-ready-promise true)))
 
 ;; Stores the installed plugins information
 (defonce ^:private registry (atom {}))
@@ -40,6 +61,8 @@
         desc (obj/get manifest "description")
         code (obj/get manifest "code")
         icon (obj/get manifest "icon")
+        allow-background (obj/get manifest "allowBackground")
+        vers (d/nilv (obj/get manifest "version") 1)
 
         permissions (into #{} (obj/get manifest "permissions" []))
         permissions
@@ -51,9 +74,22 @@
           (conj "library:read")
 
           (contains? permissions "comment:write")
-          (conj "comment:read"))
+          (conj "comment:read")
 
-        origin (obj/get (js/URL. plugin-url) "origin")
+          (contains? permissions "clipboard:write")
+          (conj "clipboard:read"))
+
+        plugin-url
+        (u/uri plugin-url)
+
+        origin
+        (if (= vers 1)
+          (-> plugin-url
+              (assoc :path "")
+              (str))
+          (-> plugin-url
+              (u/join ".")
+              (str)))
 
         prev-plugin
         (->> (:data @registry)
@@ -62,21 +98,24 @@
                        (and (= name (:name plugin))
                             (= origin (:host plugin))))))
 
-        plugin-id (d/nilv (:plugin-id prev-plugin) (str (uuid/next)))
+        plugin-id
+        (d/nilv (:plugin-id prev-plugin) (str (uuid/next)))
 
         manifest
         (d/without-nils
          {:plugin-id plugin-id
-          :url plugin-url
+          :url (str plugin-url)
+          :version vers
           :name name
           :description desc
           :host origin
           :code code
           :icon icon
+          :allow-background allow-background
           :permissions (into #{} (map str) permissions)})]
-    (if (sm/validate ::ctp/registry-entry manifest)
+    (if (sm/validate ctp/schema:registry-entry manifest)
       manifest
-      (.error js/console (clj->js (sm/explain ::ctp/registry-entry manifest))))))
+      (.error js/console (clj->js (sm/explain ctp/schema:registry-entry manifest))))))
 
 (defn save-to-store
   []
@@ -114,36 +153,145 @@
 (def default-plugin-manifest-url
   "https://plugin.podconverge.com/manifest.json")
 
-(defn auto-install-and-open-default-plugin []
+(def ^:private navigation-message-type "podconverge:navigate")
+(def ^:private production-design-studio-origin
+  "https://design.podconverge.com")
+(def ^:private production-plugin-origin "https://plugin.podconverge.com")
+(def ^:private production-plugin-origins
+  #{production-plugin-origin "https://plugin-develop.podconverge.com"})
+(def ^:private local-plugin-origin "http://localhost:4403")
+(def ^:private local-design-studio-origins
+  #{"http://localhost:3450" "https://localhost:3449"})
+(def ^:private production-destination-origins
+  #{"https://app.podconverge.com"})
+(def ^:private local-destination-origins
+  #{"https://app.podconverge.com"
+    "https://develop.podconverge.com"
+    "https://localhost:3002"})
+(def ^:private publish-path-pattern
+  #"^/panel/design-hub/publish-to-stores/[^/]+/mockups$")
+(defonce ^:private navigation-listener-installed? (atom false))
+
+(defn- parse-absolute-url
+  [value]
+  (when (string? value)
+    (try
+      (js/URL. value)
+      (catch :default _ nil))))
+
+(defn- current-design-studio-environment
+  []
+  (let [origin (.-origin js/window.location)]
+    (cond
+      (= origin production-design-studio-origin) :production
+      (contains? local-design-studio-origins origin) :local)))
+
+(defn- approved-sender-origin?
+  [environment origin]
+  (case environment
+    :production (contains? production-plugin-origins origin)
+    :local (or (= origin production-plugin-origin)
+               (= origin local-plugin-origin))
+    false))
+
+(defn- trusted-plugin-iframe?
+  [^js event]
+  (let [origin (.-origin event)
+        source (.-source event)]
+    (boolean
+     (some (fn [^js modal]
+             (let [shadow-root (.-shadowRoot modal)
+                   iframe (some-> shadow-root (.querySelector "iframe"))
+                   iframe-url (some-> iframe .-src parse-absolute-url)
+                   modal-url (some-> (.getAttribute modal "iframe-src")
+                                     parse-absolute-url)]
+               (and (.-isConnected modal)
+                    iframe
+                    (.-isConnected iframe)
+                    iframe-url
+                    modal-url
+                    (identical? source (.-contentWindow iframe))
+                    (= origin (.-origin iframe-url))
+                    (= origin (.-origin modal-url)))))
+           (array-seq (.querySelectorAll js/document "plugin-modal"))))))
+
+(defn- approved-destination-origin?
+  [environment origin]
+  (case environment
+    :production (contains? production-destination-origins origin)
+    :local (contains? local-destination-origins origin)
+    false))
+
+(defn- approved-destination?
+  [environment ^js url]
+  (and (approved-destination-origin? environment (.-origin url))
+       (empty? (.-username url))
+       (empty? (.-password url))
+       (let [path (.-pathname url)
+             params (.-searchParams url)]
+         (or (and (= path "/panel/orders")
+                  (.has params "cart"))
+             (and (re-matches publish-path-pattern path)
+                  (= "true" (.get params "selectStore")))
+             (= path "/panel/billing/plans")))))
+
+(defn- handle-navigation-message
+  [^js event]
+  (try
+    (let [data (.-data event)
+          environment (current-design-studio-environment)]
+      (when (and (= navigation-message-type (obj/get data "type"))
+                 environment
+                 (approved-sender-origin? environment (.-origin event))
+                 (trusted-plugin-iframe? event))
+        (when-let [destination (parse-absolute-url (obj/get data "url"))]
+          (when (approved-destination? environment destination)
+            (.assign js/window.location (.-href destination))))))
+    (catch :default _ nil)))
+
+(defn- install-navigation-bridge!
+  []
+  (when (compare-and-set! navigation-listener-installed? false true)
+    (.addEventListener js/window "message" handle-navigation-message)))
+
+(defn auto-install-and-open-default-plugin
   "Fetches the default plugin manifest, installs it, and triggers opening the plugin once the workspace is loaded.
    Waits `open-delay-ms` before calling pc/open-plugin!."
+  []
   (let [open-delay-ms 3000]
     (-> (js/fetch default-plugin-manifest-url)
         (.then (fn [response] (.json response)))
-        (.then (fn [manifest]
-                 (let [plugin (parse-manifest default-plugin-manifest-url manifest)]
-                   (when plugin
-                     (install-plugin! plugin)
-                     ;; Emit event to signal plugin start (optional)
-                     (st/emit! (ptk/event :app.main.data.event/event
-                                          {:app.main.data.event/name "start-plugin"
-                                           :name (:name plugin)
-                                           :host (:host plugin)}))
-                     ;; Wait until the workspace is loaded, then delay before opening
-                     (wait-for-app
-                      (fn []
-                        (let [user-can-edit? (:can-edit (deref refs/permissions))]
-                          (js/setTimeout
-                           (fn []
-                             (when user-can-edit?
-                               (pc/open-plugin! plugin)))
-                           open-delay-ms))))))))
+        (.then
+         (fn [manifest]
+           (let [plugin (parse-manifest default-plugin-manifest-url manifest)]
+             (when plugin
+               (install-plugin! plugin)
+               ;; Emit event to signal plugin start (optional)
+               (st/emit! (ptk/event :app.main.data.event/event
+                                    {:app.main.data.event/name "start-plugin"
+                                     :name (:name plugin)
+                                     :host (:host plugin)}))
+               ;; Wait until the workspace is loaded, then delay before opening
+               (wait-for-app
+                (fn []
+                  (-> (wait-for-runtime)
+                      (p/then
+                       (fn [_]
+                         (js/setTimeout
+                          (fn []
+                            (when (:can-edit (deref refs/permissions))
+                              (pc/open-plugin! plugin)))
+                          open-delay-ms)))
+                      (p/catch
+                       (fn [err]
+                         (js/console.error "Failed to open default plugin:" err))))))))))
         (.catch (fn [err]
                   (js/console.error "Failed to install default plugin:" err))))))
 
 (defn init
   "Loads stored plugins and auto-installs & opens the default plugin."
   []
+  (install-navigation-bridge!)
   (load-from-store)
   (auto-install-and-open-default-plugin))
 
@@ -159,6 +307,11 @@
 
 (defn check-permission
   [plugin-id permission]
-  (or (= plugin-id "TEST")
+  (or (= plugin-id "00000000-0000-0000-0000-000000000000")
+      (= plugin-id mcp-plugin-id)
       (let [{:keys [permissions]} (dm/get-in @registry [:data plugin-id])]
         (contains? permissions permission))))
+
+(defn get-plugin-data
+  [state plugin-id]
+  (get-in state [:profile :props :plugins :data plugin-id]))

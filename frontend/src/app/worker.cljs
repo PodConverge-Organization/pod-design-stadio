@@ -2,21 +2,19 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.worker
   (:require
    [app.common.data.macros :as dm]
    [app.common.logging :as log]
    [app.common.schema :as sm]
+   [app.common.types.objects-map]
    [app.util.object :as obj]
-   [app.worker.export]
    [app.worker.impl :as impl]
    [app.worker.import]
    [app.worker.index]
    [app.worker.messages :as wm]
-   [app.worker.selection]
-   [app.worker.snaps]
    [app.worker.thumbnails]
    [beicon.v2.core :as rx]
    [promesa.core :as p]))
@@ -33,7 +31,7 @@
      [:cmd :keyword]]]
    [:buffer? {:optional true} :boolean]])
 
-(def ^:private check-message!
+(def ^:private check-message
   (sm/check-fn schema:message))
 
 (def buffer (rx/subject))
@@ -42,9 +40,7 @@
   "Process the message and returns to the client"
   [{:keys [sender-id payload transfer] :as message}]
 
-  (dm/assert!
-   "expected valid message"
-   (check-message! message))
+  (assert (check-message message))
 
   (letfn [(post [msg]
             (let [msg (-> msg (assoc :reply-to sender-id) (wm/encode))]

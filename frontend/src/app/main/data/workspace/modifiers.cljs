@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.main.data.workspace.modifiers
   "Events related with shapes transformations"
@@ -20,26 +20,47 @@
    [app.common.types.container :as ctn]
    [app.common.types.modifiers :as ctm]
    [app.common.types.path :as path]
-   [app.common.types.shape :as shape]
    [app.common.types.shape-tree :as ctst]
    [app.common.types.shape.attrs :refer [editable-attrs]]
    [app.common.types.shape.layout :as ctl]
    [app.common.uuid :as uuid]
-   [app.main.constants :refer [zoom-half-pixel-precision]]
    [app.main.data.helpers :as dsh]
    [app.main.data.workspace.comments :as-alias dwcm]
    [app.main.data.workspace.guides :as-alias dwg]
    [app.main.data.workspace.shapes :as dwsh]
    [app.main.data.workspace.undo :as dwu]
    [app.main.features :as features]
+   [app.main.streams :as ms]
    [app.render-wasm.api :as wasm.api]
+   [app.render-wasm.gesture :as wasm-gesture]
    [app.render-wasm.shape :as wasm.shape]
    [beicon.v2.core :as rx]
-   [clojure.string :as str]
    [potok.v2.core :as ptk]))
 
 (def ^:private xf:without-uuid-zero
   (remove #(= % uuid/zero)))
+
+;; Lets set-wasm-modifiers call clean-modifiers only on the
+;; non-translation→translation transition instead of every frame.
+(def ^:private wasm-structure-modifiers-active? (volatile! false))
+
+;; Tracks whether the WASM renderer is currently in "interactive
+;; transform" mode (a drag / resize / rotate gesture in progress).
+;; Paired with `set-modifiers-start` / `set-modifiers-end` so the
+;; native side only toggles once per gesture, regardless of how many
+;; `set-wasm-modifiers` calls fire in between.
+;; State lives in `app.render-wasm.gesture` so `reload-renderer!` can reset it after
+;; `_clean_up` without an api ↔ modifiers circular dependency.
+
+(defn- ensure-interactive-transform-start!
+  []
+  (when (wasm-gesture/try-begin-interactive-transform!)
+    (wasm.api/set-modifiers-start)))
+
+(defn- ensure-interactive-transform-end!
+  []
+  (when (wasm-gesture/try-end-interactive-transform!)
+    (wasm.api/set-modifiers-end)))
 
 (def ^:private transform-attrs
   #{:selrect
@@ -52,6 +73,7 @@
     :r4
     :shadow
     :blur
+    :background-blur
     :strokes
     :width
     :height
@@ -182,30 +204,66 @@
          (map #(get objects %))
          (reduce get-ignore-tree nil))))
 
+(defn calculate-ignore-tree-wasm
+  "Retrieves a map with the flag `ignore-geometry?` given a tree of modifiers"
+  [transforms objects]
+
+  (letfn [(get-ignore-tree
+            ([ignore-tree shape]
+             (let [shape-id (dm/get-prop shape :id)
+                   transformed-shape (gsh/apply-transform shape (get transforms shape-id))
+
+                   root
+                   (if (:component-root shape)
+                     shape
+                     (ctn/get-component-shape objects shape {:allow-main? true}))
+
+                   transformed-root
+                   (if (:component-root shape)
+                     transformed-shape
+                     (gsh/apply-transform root (get transforms (:id root))))]
+
+               (get-ignore-tree ignore-tree shape transformed-shape root transformed-root)))
+
+            ([ignore-tree shape root transformed-root]
+             (let [shape-id (dm/get-prop shape :id)
+                   transformed-shape (gsh/apply-transform shape (get transforms shape-id))]
+               (get-ignore-tree ignore-tree shape transformed-shape root transformed-root)))
+
+            ([ignore-tree shape transformed-shape root transformed-root]
+             (let [shape-id (dm/get-prop shape :id)
+
+                   ignore-tree
+                   (cond-> ignore-tree
+                     (and (some? root) (ctk/in-component-copy? shape))
+                     (assoc
+                      shape-id
+                      (check-delta shape root transformed-shape transformed-root)))
+
+                   set-child
+                   (fn [ignore-tree child]
+                     (get-ignore-tree ignore-tree child root transformed-root))]
+
+               (->> (:shapes shape)
+                    (map (d/getf objects))
+                    (reduce set-child ignore-tree)))))]
+
+    ;; we check twice because we want only to search parents of components but once the
+    ;; tree is traversed we only want to process the objects in components
+    (->> (keys transforms)
+         (map #(get objects %))
+         (reduce get-ignore-tree nil))))
+
 (defn assoc-position-data
   [shape position-data old-shape]
-  (let [deltav (gpt/to-vec (gpt/point (:selrect old-shape))
-                           (gpt/point (:selrect shape)))
+  (let [deltav (gpt/to-vec (gpt/point (ctm/safe-size-rect old-shape))
+                           (gpt/point (ctm/safe-size-rect shape)))
         position-data
         (-> position-data
             (gsh/move-position-data deltav))]
     (cond-> shape
       (d/not-empty? position-data)
       (assoc :position-data position-data))))
-
-(defn update-grow-type
-  [shape old-shape]
-  (let [auto-width? (= :auto-width (:grow-type shape))
-        auto-height? (= :auto-height (:grow-type shape))
-
-        changed-width? (> (mth/abs (- (:width shape) (:width old-shape))) 0.1)
-        changed-height? (> (mth/abs (- (:height shape) (:height old-shape))) 0.1)
-
-        change-to-fixed? (or (and auto-width? (or changed-height? changed-width?))
-                             (and auto-height? changed-height?))]
-    (cond-> shape
-      change-to-fixed?
-      (assoc :grow-type :fixed))))
 
 (defn- set-wasm-props!
   [objects prev-wasm-props wasm-props]
@@ -219,28 +277,40 @@
         wasm-props
         (concat clean-props wasm-props)
 
-        wasm-props
+        ;; Stores a map shape -> set of properties changed
+        ;; this is the standard format used by process-shape-changes
+        shape-changes
         (-> (group-by first wasm-props)
-            (update-vals #(map second %)))]
+            (update-vals #(into #{} (map (comp :property second)) %)))
 
-    ;; Props are grouped by id and then assoc to the shape the new value
-    (doseq [[id properties] wasm-props]
-      (let [shape
-            (->> properties
-                 (reduce
-                  (fn [shape {:keys [property value]}]
-                    (assoc shape property value))
-                  (get objects id)))]
-
-        ;; With the new values to the shape change multi props
-        (wasm.shape/set-wasm-multi-attrs! shape (->> properties (map :property)))))))
+        ;; Create a new objects only with the temporary modifications
+        objects-changed
+        (->> wasm-props
+             (group-by first)
+             (reduce
+              (fn [objects [id properties]]
+                (let [shape
+                      (->> properties
+                           (reduce
+                            (fn [shape [_ operation]]
+                              (ctm/apply-modifier shape operation))
+                            (get objects id)))]
+                  (assoc objects id shape)))
+              objects))]
+    (wasm.shape/process-shape-changes! objects-changed shape-changes)))
 
 (defn clear-local-transform []
   (ptk/reify ::clear-local-transform
     ptk/EffectEvent
     (effect [_ state _]
       (when (features/active-feature? state "render-wasm/v1")
+        ;; End interactive transform mode BEFORE cleaning modifiers so
+        ;; the final full-quality render triggered by subsequent shape
+        ;; updates is not still classified as "interactive" (which would
+        ;; skip shadows / blur).
+        (ensure-interactive-transform-end!)
         (wasm.api/clean-modifiers)
+        (vreset! wasm-structure-modifiers-active? false)
         (set-wasm-props! (dsh/lookup-page-objects state) (:wasm-props state) [])))
 
     ptk/UpdateEvent
@@ -256,21 +326,72 @@
    (every? uuid? ids))
   (into {} (map #(vector % {:modifiers modifiers})) ids))
 
+(defn- protected-print-area-ids
+  [ids objects]
+  (into []
+        (filter
+         (fn [id]
+           (when-let [shape (get objects id)]
+             (dsh/shape-is-protected-print-area? shape objects))))
+        ids))
+
+(defn- modif-tree-root-ids
+  [modif-tree]
+  (reduce-kv
+   (fn [ids parent-id {:keys [modifiers]}]
+     (let [structure-modifiers
+           (concat (:structure-parent modifiers)
+                   (:structure-child modifiers))]
+       (reduce
+        (fn [ids {:keys [type value]}]
+          (case type
+            :remove-children (into ids value)
+            :add-children (into ids value)
+            ids))
+        (conj ids parent-id)
+        structure-modifiers)))
+   #{}
+   (or modif-tree {})))
+
+(defn- protected-modif-tree-ids
+  [modif-tree objects]
+  (let [root-ids
+        (disj (modif-tree-root-ids modif-tree) uuid/zero)
+
+        affected-ids
+        (into root-ids
+              (mapcat #(cfh/get-children-ids objects %))
+              root-ids)]
+    (protected-print-area-ids affected-ids objects)))
+
+(defn- log-protected-print-area-block!
+  [protected-ids objects guard-site]
+  (doseq [id protected-ids]
+    (when-let [shape (get objects id)]
+      (dsh/log-print-area-protection-blocked!
+       shape objects guard-site)))
+  (js/console.debug
+   "print-area mutation blocked"
+   guard-site
+   (clj->js protected-ids)))
+
 (defn build-modif-tree
   [ids objects get-modifier]
   (dm/assert!
    "expected valid coll of uuids"
    (every? uuid? ids))
-  ;; Filter out print-area ids early so downstream modifiers never touch them.
-  (let [ids (->> ids
-                 ;; remove nil/zero ids if present and remove print-area shapes
-                 (remove (fn [id]
-                           (or (= id uuid/zero)
-                               (let [shape (get objects id)]
-                                 (and shape (dsh/shape-is-protected-print-area? shape objects))))))
-                 ;; ensure concrete seq for into
-                 (into []))]
-    (into {} (map #(vector % {:modifiers (get-modifier (get objects %))}) ids))))
+  (let [ids
+        (remove
+         (fn [id]
+           (or (= id uuid/zero)
+               (seq
+                (protected-print-area-ids
+                 (cfh/get-children-ids-with-self objects id)
+                 objects))))
+         ids)]
+    (into {}
+          (map #(vector % {:modifiers (get-modifier (get objects %))}))
+          ids)))
 
 (defn modifier-remove-from-parent
   [modif-tree objects shapes]
@@ -431,10 +552,7 @@
          (dsh/lookup-page-objects state page-id)
 
          snap-pixel?
-         (and (not ignore-snap-pixel) (contains? (:workspace-layout state) :snap-pixel-grid))
-
-         zoom (dm/get-in state [:workspace-local :zoom])
-         snap-precision (if (>= zoom zoom-half-pixel-precision) 0.5 1)]
+         (and (not ignore-snap-pixel) (contains? (:workspace-layout state) :snap-pixel-grid))]
 
      (as-> objects $
        (apply-text-modifiers $ (get state :workspace-text-modifier))
@@ -442,8 +560,7 @@
        (gm/set-objects-modifiers modif-tree $ (merge
                                                params
                                                {:ignore-constraints ignore-constraints
-                                                :snap-pixel? snap-pixel?
-                                                :snap-precision snap-precision}))))))
+                                                :snap-pixel? snap-pixel?}))))))
 
 (defn- calculate-update-modifiers
   [old-modif-tree state ignore-constraints ignore-snap-pixel modif-tree]
@@ -453,9 +570,6 @@
         snap-pixel?
         (and (not ignore-snap-pixel) (contains? (:workspace-layout state) :snap-pixel-grid))
 
-        zoom (dm/get-in state [:workspace-local :zoom])
-
-        snap-precision (if (>= zoom zoom-half-pixel-precision) 0.5 1)
         objects
         (-> objects
             (apply-text-modifiers (get state :workspace-text-modifier)))]
@@ -465,8 +579,7 @@
      modif-tree
      objects
      {:ignore-constraints ignore-constraints
-      :snap-pixel? snap-pixel?
-      :snap-precision snap-precision})))
+      :snap-pixel? snap-pixel?})))
 
 (defn update-modifiers
   ([modif-tree]
@@ -496,30 +609,16 @@
    (ptk/reify ::set-modifiers
      ptk/UpdateEvent
      (update [_ state]
-       (let [page-id (:current-page-id state)
-             ;; lookup objects for the current page
-             objects (dsh/lookup-page-objects state page-id)
-             ;; collect ids present in the incoming modif-tree
-             ids     (->> (keys modif-tree) (into []))
-             ;; find any ids that are print-area shapes
-             print-area-ids
-             (->> ids
-                  (filter (fn [id]
-                            (let [shape (get objects id)]
-                              (and shape (dsh/shape-is-protected-print-area? shape objects)))))
-                  (into []))]
-         (if (not (empty? print-area-ids))
+       (let [page-id       (:current-page-id state)
+             objects       (dsh/lookup-page-objects state page-id)
+             modifiers     (calculate-modifiers state ignore-constraints ignore-snap-pixel modif-tree page-id params)
+             protected-ids (protected-modif-tree-ids modifiers objects)]
+         (if (seq protected-ids)
            (do
-             (doseq [id print-area-ids]
-               (when-let [shape (get objects id)]
-                 (dsh/log-print-area-protection-blocked! shape objects "workspace.modifiers/set-modifiers")))
-             (js/console.debug "set-modifiers: aborting because modif-tree contains print-area ids"
-                               (clj->js print-area-ids))
-             ;; return state unchanged (no modifiers applied)
+             (log-protected-print-area-block!
+              protected-ids objects "workspace.modifiers/set-modifiers")
              state)
-           ;; otherwise compute and set modifiers as before
-           (let [modifiers (calculate-modifiers state ignore-constraints ignore-snap-pixel modif-tree page-id params)]
-             (assoc state :workspace-modifiers modifiers))))))))
+           (assoc state :workspace-modifiers modifiers)))))))
 
 (defn- parse-structure-modifiers
   [modif-tree]
@@ -570,11 +669,13 @@
               nil
 
               (ctm/has-geometry? (:modifiers data))
-              (d/vec2 id (ctm/modifiers->transform (:modifiers data)))
+              (let [parent (:geometry-parent (:modifiers data))
+                    kind (if (d/not-empty? parent) :parent :child)]
+                (d/vec2 id {:transform (ctm/modifiers->transform (:modifiers data)) :kind kind}))
 
               ;; Unit matrix is used for reflowing
               :else
-              (d/vec2 id default-transform))))))
+              (d/vec2 id {:transform default-transform :kind :parent}))))))
 
 (defn- parse-geometry-modifiers
   [modif-tree]
@@ -592,50 +693,109 @@
 (defn set-temporary-selrect
   [selrect]
   (ptk/reify ::set-temporary-selrect
-    ptk/UpdateEvent
-    (update [_ state]
-      (assoc state :workspace-selrect selrect))))
+    ptk/EffectEvent
+    (effect [_ _ _]
+      (rx/push! ms/workspace-selrect selrect))))
 
 (defn set-temporary-modifiers
   [modifiers]
   (ptk/reify ::set-temporary-modifiers
-    ptk/UpdateEvent
-    (update [_ state]
-      (assoc state :workspace-wasm-modifiers modifiers))))
+    ptk/EffectEvent
+    (effect [_ _ _]
+      (rx/push! ms/wasm-modifiers (into {} modifiers)))))
 
 (def ^:private xf:map-key (map key))
 
+(defn- translate-selrect
+  "Shift `selrect`'s center by (tx, ty). Width/height/transform are
+   invariant under pure translation, so only `:center` moves."
+  [selrect tx ty]
+  (update selrect :center
+          (fn [c] (gpt/point (+ (:x c) tx) (+ (:y c) ty)))))
+
+(defn- cached-translation-selrect
+  "Translation-only fast path for the live selection rect. Avoids a WASM
+   `get-selection-rect` call per drag frame by caching the gesture-start
+   base: on the first emission, ask WASM and back out the current delta
+   to recover the base; on every later emission, shift the cached base
+   by the new (tx, ty)."
+  [ids ^js first-matrix cache]
+  (let [tx (.-e first-matrix)
+        ty (.-f first-matrix)]
+    (if-let [base @cache]
+      (translate-selrect base tx ty)
+      (let [computed (wasm.api/get-selection-rect ids)]
+        (vreset! cache (translate-selrect computed (- tx) (- ty)))
+        computed))))
+
 #_:clj-kondo/ignore
 (defn set-wasm-modifiers
-  [modif-tree & {:keys [ignore-constraints ignore-snap-pixel]
+  [modif-tree & {:keys [ignore-constraints ignore-snap-pixel
+                        subtree-ids-by-id selection-rect-cache]
                  :or {ignore-constraints false ignore-snap-pixel false}
                  :as params}]
   (ptk/reify ::set-wasm-modifiers
     ptk/UpdateEvent
     (update [_ state]
-      (let [property-changes
-            (extract-property-changes modif-tree)]
-        (-> state
-            (assoc :prev-wasm-props (:wasm-props state))
-            (assoc :wasm-props property-changes))))
+      (let [objects          (dsh/lookup-page-objects state)
+            protected-ids    (protected-modif-tree-ids modif-tree objects)
+            property-changes (extract-property-changes modif-tree)]
+        (if (seq protected-ids)
+          (do
+            (log-protected-print-area-block!
+             protected-ids objects "workspace.modifiers/set-wasm-modifiers:update")
+            state)
+          (if (d/not-empty? property-changes)
+            (-> state
+                (assoc :prev-wasm-props (:wasm-props state))
+                (assoc :wasm-props property-changes))
+            state))))
 
     ptk/WatchEvent
     (watch [_ state _]
-      (wasm.api/clean-modifiers)
-      (let [prev-wasm-props (:prev-wasm-props state)
-            wasm-props      (:wasm-props state)
-            objects         (dsh/lookup-page-objects state)
-            pixel-precision false]
-        (set-wasm-props! objects prev-wasm-props wasm-props)
-        (let [structure-entries (parse-structure-modifiers modif-tree)]
-          (wasm.api/set-structure-modifiers structure-entries)
-          (let [geometry-entries (parse-geometry-modifiers modif-tree)
-                modifiers        (wasm.api/propagate-modifiers geometry-entries pixel-precision)]
-            (wasm.api/set-modifiers modifiers)
-            (let [ids     (into [] xf:map-key geometry-entries)
-                  selrect (wasm.api/get-selection-rect ids)]
-              (rx/of (set-temporary-selrect selrect)
-                     (set-temporary-modifiers modifiers)))))))))
+      ;; Entering an interactive transform (drag/resize/rotate). Flip
+      ;; the renderer into fast + atlas-backdrop mode so the live
+      ;; preview is cheap, tiles never appear sequentially and the main
+      ;; thread is not blocked. The pair is closed in
+      ;; `clear-local-transform`.
+      (let [objects       (dsh/lookup-page-objects state)
+            protected-ids (protected-modif-tree-ids modif-tree objects)
+            snap-pixel?   (and (not ignore-snap-pixel) (contains? (:workspace-layout state) :snap-pixel-grid))
+            translation? (every? #(ctm/only-move? (:modifiers %)) (vals modif-tree))]
+        (if (seq protected-ids)
+          (do
+            (log-protected-print-area-block!
+             protected-ids objects "workspace.modifiers/set-wasm-modifiers:watch")
+            (rx/empty))
+
+          (do
+            (ensure-interactive-transform-start!)
+            (if translation?
+              ;; Pure translation: no structure changes needed. If structure
+              ;; modifiers were active from a previous non-translation frame
+              ;; (e.g. shape hovered over a frame then dragged back out),
+              ;; clear them now so the shape is not clipped by the old frame.
+              (when @wasm-structure-modifiers-active?
+                (wasm.api/clean-modifiers)
+                (vreset! wasm-structure-modifiers-active? false))
+              (do
+                (set-wasm-props! objects (:prev-wasm-props state) (:wasm-props state))
+                (wasm.api/clean-modifiers)
+                (wasm.api/set-structure-modifiers (parse-structure-modifiers modif-tree))
+                (vreset! wasm-structure-modifiers-active? true)))
+            (let [geometry-entries (parse-geometry-modifiers modif-tree)
+                  root-modifiers   (into [] (map (fn [[id data]] [id (:transform data)])) geometry-entries)
+                  modifiers
+                  (if (and translation? (not snap-pixel?))
+                    root-modifiers
+                    (wasm.api/propagate-modifiers geometry-entries snap-pixel?))]
+              (wasm.api/set-modifiers modifiers)
+              (let [ids     (into [] xf:map-key geometry-entries)
+                    selrect (if (and translation? (not snap-pixel?) selection-rect-cache (seq modifiers))
+                              (cached-translation-selrect ids (second (first modifiers)) selection-rect-cache)
+                              (wasm.api/get-selection-rect ids))]
+                (rx/of (set-temporary-selrect selrect)
+                       (set-temporary-modifiers modifiers))))))))))
 
 (defn propagate-structure-modifiers
   [modif-tree objects]
@@ -662,64 +822,128 @@
 
 #_:clj-kondo/ignore
 (defn apply-wasm-modifiers
-  [modif-tree & {:keys [ignore-constraints ignore-snap-pixel snap-ignore-axis undo-group]
-                 :or {ignore-constraints false ignore-snap-pixel false snap-ignore-axis nil undo-group nil}
+  [modif-tree & {:keys [ignore-constraints ignore-snap-pixel snap-ignore-axis undo-transation?
+                        subtree-ids-by-id]
+                 :or {ignore-constraints false ignore-snap-pixel false snap-ignore-axis nil undo-transation? true}
                  :as params}]
   (ptk/reify ::apply-wasm-modifiesr
     ptk/WatchEvent
     (watch [_ state _]
-      (let [objects          (dsh/lookup-page-objects state)
+      (let [objects       (dsh/lookup-page-objects state)
+            protected-ids (protected-modif-tree-ids modif-tree objects)
+            translation?  (every? #(ctm/only-move? (:modifiers %)) (vals modif-tree))]
+        (if (seq protected-ids)
+          (do
+            (log-protected-print-area-block!
+             protected-ids objects "workspace.modifiers/apply-wasm-modifiers")
+            (rx/empty))
 
-            ignore-tree
-            (binding [shape/*wasm-sync* false]
-              (calculate-ignore-tree modif-tree objects))
+          (do
+            (wasm.api/clean-modifiers)
+            (when-not translation?
+              (wasm.api/set-structure-modifiers (parse-structure-modifiers modif-tree)))
 
-            options
-            (-> params
-                (assoc :reg-objects? true)
-                (assoc :ignore-tree ignore-tree)
-                ;; Attributes that can change in the transform. This
-                ;; way we don't have to check all the attributes
-                (assoc :attrs transform-attrs))
+            ;; Apply property changes (e.g. grow-type) to WASM shapes before
+            ;; propagating geometry, so propagate_modifiers sees the updated state.
+            (doseq [[id {:keys [property value]}] (extract-property-changes modif-tree)]
+              (when (= property :grow-type)
+                (wasm.api/use-shape id)
+                (wasm.api/set-shape-grow-type value)))
 
-            geometry-entries
-            (parse-geometry-modifiers modif-tree)
+            (let [geometry-entries
+                  (parse-geometry-modifiers modif-tree)
 
-            snap-pixel?
-            (and (not ignore-snap-pixel) (contains? (:workspace-layout state) :snap-pixel-grid))
+                  snap-pixel?
+                  (and (not ignore-snap-pixel) (contains? (:workspace-layout state) :snap-pixel-grid))
 
-            transforms
-            (into {} (wasm.api/propagate-modifiers geometry-entries snap-pixel?))
+                  transforms
+                  (if (and translation? (not snap-pixel?))
+                    ;; Mirror WASM `propagate_modifiers` in CLJS: splat the
+                    ;; translation matrix onto every descendant. Without
+                    ;; this step the commit would only touch the dragged
+                    ;; primaries and descendants would snap back to their
+                    ;; pre-drag positions on drop.
+                    ;;
+                    ;; Skipped when `snap-pixel?` is on: WASM applies
+                    ;; per-shape pixel correction (different scale/translate
+                    ;; per descendant) which we can't replicate cheaply on
+                    ;; the CLJS side.
+                    (reduce
+                     (fn [acc [id data]]
+                       (let [t (:transform data)
+                             subtree-ids
+                             (or (get subtree-ids-by-id id)
+                                 (cfh/get-children-ids-with-self objects id))]
+                         (reduce (fn [a sid] (assoc a sid t)) acc subtree-ids)))
+                     {}
+                     geometry-entries)
+                    (into {} (wasm.api/propagate-modifiers geometry-entries snap-pixel?)))
 
-            modif-tree
-            (propagate-structure-modifiers modif-tree (dsh/lookup-page-objects state))
+                  ignore-tree
+                  (calculate-ignore-tree-wasm transforms objects)
 
-            ids
-            (into [] xf:without-uuid-zero (keys transforms))
+                  options
+                  (-> params
+                      (assoc :reg-objects? true)
+                      (assoc :ignore-tree ignore-tree)
+                      (assoc :translation? translation?)
+                      ;; Attributes that can change in the transform. This
+                      ;; way we don't have to check all the attributes
+                      (assoc :attrs transform-attrs))
 
-            update-shape
-            (fn [shape]
-              (let [shape-id    (dm/get-prop shape :id)
-                    transform   (get transforms shape-id)
-                    modifiers   (dm/get-in modif-tree [shape-id :modifiers])]
-                (-> shape
-                    (gsh/apply-transform transform)
-                    (ctm/apply-structure-modifiers modifiers))))]
-        (rx/of
-         (clear-local-transform)
-         (ptk/event ::dwg/move-frame-guides {:ids ids :transforms transforms})
-         (ptk/event ::dwcm/move-frame-comment-threads transforms)
-         (dwsh/update-shapes ids update-shape options))))))
+                  modif-tree
+                  (propagate-structure-modifiers modif-tree (dsh/lookup-page-objects state))
 
-(defn- rotation-shape-ids
-  [shapes objects]
-  (->> shapes
-       ;; remove blocked shapes and protected print-area shapes
-       (remove (fn [s]
-                 (or (get s :blocked false)
-                     (dsh/shape-is-protected-print-area? s objects))))
-       (filter #(:rotation (get editable-attrs (:type %))))
-       (map :id)))
+                  ids
+                  (into (set (keys modif-tree)) xf:without-uuid-zero (keys transforms))
+
+                  update-shape
+                  (fn [shape]
+                    (let [shape-id  (dm/get-prop shape :id)
+                          transform (get transforms shape-id)
+                          modifiers (dm/get-in modif-tree [shape-id :modifiers])]
+                      (-> shape
+                          (gsh/apply-transform transform)
+                          (ctm/apply-structure-modifiers modifiers))))
+
+                  bool-ids
+                  (into #{}
+                        (comp
+                         (mapcat (partial cfh/get-parents-with-self objects))
+                         (filter cfh/bool-shape?)
+                         (map :id))
+                        ids)
+
+                  undo-id (js/Symbol)]
+              (rx/concat
+               (if undo-transation?
+                 (rx/of (dwu/start-undo-transaction undo-id))
+                 (rx/empty))
+               (rx/of
+                (clear-local-transform)
+                (ptk/event ::dwg/move-frame-guides {:ids ids :transforms transforms})
+                (ptk/event ::dwcm/move-frame-comment-threads transforms)
+                (dwsh/update-shapes ids update-shape options)
+
+                ;; The update to the bool path needs to be in a different operation because it
+                ;; needs to have the updated children info.
+                ;; `update-layout? false`: recalculating a bool path can never change
+                ;; `:hidden`, and the layout check would recompute the whole boolean
+                ;; path in WASM once per bool shape just to find that out.
+                (dwsh/update-shapes bool-ids path/update-bool-shape (assoc options
+                                                                           :with-objects? true
+                                                                           :update-layout? false)))
+
+               (if undo-transation?
+                 (rx/of (dwu/commit-undo-transaction undo-id))
+                 (rx/empty))))))))))
+
+(def ^:private
+  xf-rotation-shape
+  (comp
+   (remove #(get % :blocked false))
+   (filter #(:rotation (get editable-attrs (:type %))))
+   (map :id)))
 
 ;; Rotation use different algorithm to calculate children
 ;; modifiers (and do not use child constraints).
@@ -731,16 +955,16 @@
    (ptk/reify ::set-wasm-rotation-modifiers
      ptk/EffectEvent
      (effect [_ state _]
+       (ensure-interactive-transform-start!)
        (let [objects (dsh/lookup-page-objects state)
-             ids     (rotation-shape-ids shapes objects)
+             ids     (sequence xf-rotation-shape shapes)
 
              get-modifier
              (fn [shape]
                (ctm/rotation-modifiers shape center angle))
 
              modif-tree
-             (-> (build-modif-tree ids objects get-modifier)
-                 (gm/set-objects-modifiers objects))
+             (build-modif-tree ids objects get-modifier)
 
              modifiers
              (mapv (fn [[id {:keys [modifiers]}]]
@@ -758,7 +982,7 @@
      ptk/UpdateEvent
      (update [_ state]
        (let [objects (dsh/lookup-page-objects state)
-             ids     (rotation-shape-ids shapes objects)
+             ids     (sequence xf-rotation-shape shapes)
 
              get-modifier
              (fn [shape]
@@ -782,9 +1006,7 @@
             objects (dsh/lookup-page-objects state page-id)
             ids
             (->> shapes
-                 ;; remove blocked shapes and print-area shapes
-                 (remove #(or (get % :blocked false)
-                              (dsh/shape-is-protected-print-area? % objects)))
+                 (remove #(get % :blocked false))
                  (filter #(contains? (get editable-attrs (:type %)) :rotation))
                  (map :id))
 
@@ -810,13 +1032,8 @@
       (let [ids
             (into [] xf:without-uuid-zero (keys object-modifiers))
 
-            ;; find any print-area ids among the direct targets (do NOT filter them)
-            print-area-ids
-            (->> ids
-                 (filter (fn [id]
-                           (let [shape (get objects id)]
-                             (and shape (dsh/shape-is-protected-print-area? shape objects)))))
-                 (into []))
+            protected-ids
+            (protected-modif-tree-ids object-modifiers objects)
 
             ids-with-children
             (into ids
@@ -841,26 +1058,24 @@
                     text-shape? (cfh/text-shape? shape)
                     pos-data    (when ^boolean text-shape?
                                   (dm/get-in text-modifiers [shape-id :position-data]))]
+
                 (-> shape
                     (gsh/transform-shape modifiers)
                     (cond-> (d/not-empty? pos-data)
-                      (assoc-position-data pos-data shape))
-                    (cond-> (or (cfh/path-shape? shape)
-                                (cfh/bool-shape? shape))
-                      (update :content path/content))
-                    (cond-> text-shape?
-                      (update-grow-type shape)))))]
-        ;; Abort whole operation if any target id is a print-area
-        (if (not (empty? print-area-ids))
+                      (assoc-position-data pos-data shape)))))]
+
+        (if (seq protected-ids)
           (do
-            (doseq [id print-area-ids]
-              (when-let [shape (get objects id)]
-                (dsh/log-print-area-protection-blocked! shape objects "workspace.modifiers/apply-modifiers*")))
-            (js/console.debug "apply-modifiers*: aborting because targets contain print-area ids" (clj->js print-area-ids))
+            (log-protected-print-area-block!
+             protected-ids
+             objects
+             "workspace.modifiers/apply-modifiers*")
             (rx/empty))
-          (rx/of (ptk/event ::dwg/move-frame-guides {:ids ids-with-children :modifiers object-modifiers})
-                 (ptk/event ::dwcm/move-frame-comment-threads ids-with-children)
-                 (dwsh/update-shapes ids update-shape options)))))))
+
+          (rx/of
+           (ptk/event ::dwg/move-frame-guides {:ids ids-with-children :modifiers object-modifiers})
+           (ptk/event ::dwcm/move-frame-comment-threads ids-with-children)
+           (dwsh/update-shapes ids update-shape options)))))))
 
 (defn apply-modifiers
   ([]
@@ -882,39 +1097,29 @@
                (calculate-modifiers state ignore-constraints ignore-snap-pixel modifiers page-id)
                (get state :workspace-modifiers))
 
-             ;; compute the direct target ids (ignore uuid/zero)
-             ids (into [] xf:without-uuid-zero (keys object-modifiers))
-
-             ;; find any print-area ids among the direct targets
-             print-area-ids
-             (->> ids
-                  (filter (fn [id]
-                            (let [shape (get objects id)]
-                              (and shape (dsh/shape-is-protected-print-area? shape objects)))))
-                  (into []))
+             protected-ids
+             (protected-modif-tree-ids object-modifiers objects)
 
              undo-id
              (js/Symbol)]
 
-         ;; Abort whole operation if any target id is a print-area
-         (if (not (empty? print-area-ids))
+         (if (seq protected-ids)
            (do
-             (doseq [id print-area-ids]
-               (when-let [shape (get objects id)]
-                 (dsh/log-print-area-protection-blocked! shape objects "workspace.modifiers/apply-modifiers")))
-             (js/console.debug "apply-modifiers: aborting because targets contain print-area ids" (clj->js print-area-ids))
-             ;; return an empty observable - nothing executed, no undo started
+             (log-protected-print-area-block!
+              protected-ids
+              objects
+              "workspace.modifiers/apply-modifiers")
              (rx/empty))
 
-           ;; otherwise proceed with original behavior
            (rx/concat
             (if undo-transation?
               (rx/of (dwu/start-undo-transaction undo-id))
               (rx/empty))
-            (rx/of (apply-modifiers* objects object-modifiers text-modifiers options)
-                   (fn [state]
-                     (let [ids (into [] xf:without-uuid-zero (keys object-modifiers))]
-                       (update state :workspace-text-modifier #(apply dissoc % ids)))))
+            (rx/of
+             (apply-modifiers* objects object-modifiers text-modifiers options)
+             (fn [state]
+               (let [ids (into [] xf:without-uuid-zero (keys object-modifiers))]
+                 (update state :workspace-text-modifier #(apply dissoc % ids)))))
             (if (nil? modifiers)
               (rx/of (clear-local-transform))
               (rx/empty))
@@ -923,23 +1128,20 @@
               (rx/empty)))))))))
 
 ;; Pure function to determine next grow-type for text layers
-(defn next-grow-type [current-grow-type resize-direction]
+(defn next-grow-type
+  [current-grow-type scalev]
   (cond
     (= current-grow-type :fixed)
     :fixed
 
-    (and (= resize-direction :horizontal)
-         (= current-grow-type :auto-width))
-    :auto-height
-
-    (and (= resize-direction :horizontal)
-         (= current-grow-type :auto-height))
-    :auto-height
-
-    (and (= resize-direction :vertical)
+    (and (not (mth/close? (:y scalev) 1.0))
          (or (= current-grow-type :auto-width)
              (= current-grow-type :auto-height)))
     :fixed
+
+    (and (not (mth/close? (:x scalev) 1.0))
+         (= current-grow-type :auto-width))
+    :auto-height
 
     :else
     current-grow-type))

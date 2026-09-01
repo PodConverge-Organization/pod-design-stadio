@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.rpc.commands.management
   "A collection of RPC methods for manage the files, projects and team organization."
@@ -28,16 +28,14 @@
    [app.setup :as-alias setup]
    [app.setup.templates :as tmpl]
    [app.storage.tmp :as tmp]
-   [app.util.services :as sv]
-   [app.worker :as-alias wrk]
-   [promesa.exec :as px]))
+   [app.util.services :as sv]))
 
 ;; --- COMMAND: Duplicate File
 
 (defn duplicate-file
   [{:keys [::db/conn ::bfc/timestamp] :as cfg} {:keys [profile-id file-id name reset-shared-flag] :as params}]
   (let [;; We don't touch the original file on duplication
-        file       (bfc/get-file cfg file-id)
+        file       (bfc/get-file cfg file-id :realize? true)
         project-id (:project-id file)
         file       (-> file
                        (update :id bfc/lookup-index)
@@ -74,10 +72,14 @@
       (doseq [params (sequence (comp
                                 (map #(bfc/remap-id % :file-id))
                                 (map #(bfc/remap-id % :library-file-id))
-                                (map #(assoc % :synced-at timestamp))
                                 (map #(assoc % :created-at timestamp)))
                                flibs)]
-        (db/insert! conn :file-library-rel params ::db/return-keys false))
+        (let [rel-params (dissoc params :synced-at)]
+          (db/insert! conn :file-library-rel rel-params ::db/return-keys false)
+          (bfc/upsert-file-library-sync! conn {:file-id (:file-id rel-params)
+                                               :library-file-id (:library-file-id rel-params)
+                                               :synced-at (or (:synced-at params)
+                                                              timestamp)})))
 
       (doseq [params (sequence (comp
                                 (map #(bfc/remap-id % :id))
@@ -209,8 +211,7 @@
                          (update :team-id bfc/lookup-index)
                          (assoc :created-at timestamp)
                          (assoc :modified-at timestamp))]
-          (db/insert! conn :team-profile-rel params
-                      {::db/return-keys false})))
+          (teams/add-profile-to-team! cfg params {::db/return-keys false})))
 
       ;; Duplicate team fonts
       (doseq [font fonts]
@@ -313,15 +314,14 @@
 
     ;; Update the modification date of the all affected projects
     ;; ensuring that the destination project is the most recent one.
-    (doseq [project-id (into (list project-id) source)]
-
-      ;; NOTE: as this is executed on virtual thread, sleeping does
-      ;; not causes major issues, and allows an easy way to set a
-      ;; trully different modification date to each file.
-      (px/sleep 10)
-      (db/update! conn :project
-                  {:modified-at (ct/now)}
-                  {:id project-id}))
+    (loop [project-ids (into (list project-id) source)
+           modified-at (ct/now)]
+      (when-let [project-id (first project-ids)]
+        (db/update! conn :project
+                    {:modified-at modified-at}
+                    {:id project-id})
+        (recur (rest project-ids)
+               (ct/plus modified-at 10))))
 
     nil))
 
@@ -342,6 +342,21 @@
 ;; --- COMMAND: Move project
 
 (defn move-project
+  "Moves a project from one team to another.
+
+  Performs comprehensive validation including:
+  - Permission checks on both source and destination teams
+  - Team compatibility verification between source and destination
+  - File features compatibility with destination team
+
+  The operation also:
+  - Updates the project's team assignment
+  - Cleans up any broken library relations after the move
+
+  Throws:
+  - :cant-move-to-same-team if trying to move project to its current team
+  - Permission exceptions if user lacks required permissions
+  - Team compatibility exceptions if teams are incompatible"
   [{:keys [::db/conn] :as cfg} {:keys [profile-id team-id project-id] :as params}]
   (let [project (db/get-by-id conn :project project-id {:columns [:id :team-id]})
         pids    (->> (db/query conn :project {:team-id (:team-id project)} {:columns [:id]})
@@ -396,12 +411,7 @@
 ;; --- COMMAND: Clone Template
 
 (defn clone-template
-  [{:keys [::db/pool ::wrk/executor] :as cfg} {:keys [project-id profile-id] :as params} template]
-
-  ;; NOTE: the importation process performs some operations
-  ;; that are not very friendly with virtual threads, and for
-  ;; avoid unexpected blocking of other concurrent operations
-  ;; we dispatch that operation to a dedicated executor.
+  [{:keys [::db/pool] :as cfg} {:keys [project-id profile-id] :as params} template]
   (let [template (tmp/tempfile-from template
                                     :prefix "penpot.template."
                                     :suffix ""
@@ -419,8 +429,8 @@
                      (assoc ::bfc/features (cfeat/get-team-enabled-features cf/flags team)))
 
         result   (if (= format :binfile-v3)
-                   (px/invoke! executor (partial bf.v3/import-files! cfg))
-                   (px/invoke! executor (partial bf.v1/import-files! cfg)))]
+                   (bf.v3/import-files! cfg)
+                   (bf.v1/import-files! cfg))]
 
     (db/tx-run! cfg
                 (fn [{:keys [::db/conn] :as cfg}]
@@ -433,10 +443,10 @@
                     (doseq [file-id result]
                       (let [props (assoc props :id file-id)
                             event (-> (audit/event-from-rpc-params params)
-                                      (assoc ::audit/profile-id profile-id)
-                                      (assoc ::audit/name "create-file")
-                                      (assoc ::audit/props props))]
-                        (audit/submit! cfg event))))))
+                                      (assoc :profile-id profile-id)
+                                      (assoc :name "create-file")
+                                      (assoc :props props))]
+                        (audit/submit cfg event))))))
 
     result))
 

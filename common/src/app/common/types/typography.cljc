@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns app.common.types.typography
   (:require
@@ -18,26 +18,24 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def schema:typography
-  (sm/register!
-   ^{::sm/type ::typography}
-   [:map {:title "Typography"}
-    [:id ::sm/uuid]
-    [:name :string]
-    [:font-id :string]
-    [:font-family :string]
-    [:font-variant-id :string]
-    [:font-size :string]
-    [:font-weight :string]
-    [:font-style :string]
-    [:line-height :string]
-    [:letter-spacing :string]
-    [:text-transform :string]
-    [:modified-at {:optional true} ::ct/inst]
-    [:path {:optional true} [:maybe :string]]
-    [:plugin-data {:optional true} ::ctpg/plugin-data]]))
+  [:map {:title "Typography"}
+   [:id ::sm/uuid]
+   [:name :string]
+   [:font-id :string]
+   [:font-family :string]
+   [:font-variant-id :string]
+   [:font-size :string]
+   [:font-weight :string]
+   [:font-style :string]
+   [:line-height :string]
+   [:letter-spacing :string]
+   [:text-transform :string]
+   [:modified-at {:optional true} ::ct/inst]
+   [:path {:optional true} [:maybe :string]]
+   [:plugin-data {:optional true} ctpg/schema:plugin-data]])
 
 (def check-typography
-  (sm/check-fn ::typography))
+  (sm/check-fn schema:typography))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HELPERS

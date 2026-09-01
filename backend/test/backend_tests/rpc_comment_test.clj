@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) KALEIDOS INC
+;; Copyright (c) KALEIDOS INC Sucursal en España SL
 
 (ns backend-tests.rpc-comment-test
   (:require
@@ -143,7 +143,6 @@
           (let [comment' (th/db-get :comment {:id (:id comment)})]
             (t/is (not= (:modified-at comment) (:modified-at comment')))
             (t/is (= (:content data) (:content comment'))))))
-
 
       (t/testing "retrieve threads"
         (let [data {::th/type :get-comment-threads
