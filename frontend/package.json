@@ -113,7 +113,7 @@
     "typescript": "^5.9.2",
     "ua-parser-js": "2.0.7",
     "vite": "^7.3.1",
-    "vitest": "^4.0.18",
+    "vitest": "^4.1.11",
     "wait-on": "^9.0.3",
     "wasm-pack": "^0.13.1",
     "watcher": "^2.3.1",
